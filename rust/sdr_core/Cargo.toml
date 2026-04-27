@@ -1,0 +1,22 @@
+[package]
+name = "sdr_core"
+version = "0.1.0"
+edition = "2024"
+description = "Modular, high-performance SDR signal processing library for Android"
+repository = "https://github.com/kenttleton/sdr-core"
+license = "MIT OR Apache-2.0"
+keywords = ["sdr", "rtl-sdr", "android", "signal-processing", "radio"]
+categories = ["embedded", "science"]
+readme = "README.md"
+
+[lib]
+name = "sdr_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+jni = "0.21"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
