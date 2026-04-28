@@ -1,17 +1,20 @@
 cmake_minimum_required(VERSION 3.22.1)
-project("sdr_core")
+project("sdrgo")
 
-# Path to Rust compiled library
+set(CMAKE_VERBOSE_MAKEFILE ON)
+set(PACKAGE_NAME "sdrgo")
+
+# Rust pre-built library (compiled by scripts/build-rust.sh)
 set(RUST_LIB_DIR
     "${CMAKE_SOURCE_DIR}/../../../../../../rust/sdr_core/target/${ANDROID_ABI}/release"
 )
 
 add_library(sdr_core SHARED IMPORTED)
-
 set_target_properties(sdr_core PROPERTIES
     IMPORTED_LOCATION "${RUST_LIB_DIR}/libsdr_core.so"
 )
 
-target_include_directories(sdr_core INTERFACE
-    "${CMAKE_SOURCE_DIR}/include"
-)
+# Required because externalNativeBuild replaces the React Native Gradle
+# plugin's automatic CMake step. This include restores TurboModule codegen
+# and core native setup (PlatformConstants, etc.).
+include(${REACT_ANDROID_DIR}/cmake-utils/ReactNative-application.cmake)

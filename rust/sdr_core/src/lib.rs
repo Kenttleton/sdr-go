@@ -1,6 +1,12 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+
+mod usb;
+mod dsp;
 use jni::JNIEnv;
 use jni::objects::JClass;
 use jni::sys::jstring;
+
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Java_com_sdrgo_SdrModule_coreVersion(

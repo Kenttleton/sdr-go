@@ -4,6 +4,32 @@ apply plugin: "com.facebook.react"
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
 
+// Rust cross-compilation triple → Android ABI directory name
+def rustAbiMap = [
+    'aarch64-linux-android':   'arm64-v8a',
+    'x86_64-linux-android':    'x86_64',
+    'armv7-linux-androideabi': 'armeabi-v7a',
+    'i686-linux-android':      'x86',
+]
+
+task copyRustLibs {
+    doLast {
+        def rustTarget = "${projectDir}/../../rust/sdr_core/target"
+        def jniLibsDir = "${projectDir}/src/main/jniLibs"
+        rustAbiMap.each { rustAbi, androidAbi ->
+            def soFile = file("${rustTarget}/${rustAbi}/release/libsdr_core.so")
+            if (soFile.exists()) {
+                def destDir = file("${jniLibsDir}/${androidAbi}")
+                destDir.mkdirs()
+                copy { from soFile; into destDir }
+                println "[copyRustLibs] ${rustAbi} → jniLibs/${androidAbi}/"
+            }
+        }
+    }
+}
+
+preBuild.dependsOn copyRustLibs
+
 /**
  * This is the configuration block to customize your React Native Android app.
  * By default you don't need to apply any configuration, just uncomment the lines you need.

@@ -46,6 +46,7 @@ class MainApplication : Application(), ReactApplication {
     } catch (e: IllegalArgumentException) {
       ReleaseLevel.STABLE
     }
+    System.loadLibrary("sdrgo")
     loadReactNative(this)
     ApplicationLifecycleDispatcher.onApplicationCreate(this)
   }

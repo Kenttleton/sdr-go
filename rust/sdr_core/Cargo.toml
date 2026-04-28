@@ -15,6 +15,13 @@ crate-type = ["cdylib"]
 
 [dependencies]
 jni = "0.21"
+rtl-sdr-rs = { version = "0.3", features = ["rtl_sdr_blog"] }
+num-complex = "0.4"
+rustfft = "6"
+log = "0.4"
+android_logger = "0.14"
+parking_lot = "0.12"
+thiserror = "1"
 
 [profile.release]
 opt-level = 3

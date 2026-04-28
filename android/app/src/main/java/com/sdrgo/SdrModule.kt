@@ -10,6 +10,12 @@ class SdrModule(reactContext: ReactApplicationContext) :
 
     override fun getName(): String = "SdrModule"
 
+    private val usbPermissionManager = UsbPermissionManager(reactContext)
+
+    init {
+        usbPermissionManager.registerReceiver()
+    }
+
     @ReactMethod
     fun getCoreVersion(promise: Promise) {
         try {
@@ -17,6 +23,22 @@ class SdrModule(reactContext: ReactApplicationContext) :
         } catch (e: Exception) {
             promise.reject("SDR_ERROR", e.message)
         }
+    }
+
+    @ReactMethod
+    fun requestUsbPermission(promise: Promise) {
+        usbPermissionManager.requestPermission { fd ->
+            if (fd != null) {
+                promise.resolve(fd)
+            } else {
+                promise.reject("USB_ERROR", "No RTL-SDR device found or permission denied")
+            }
+        }
+    }
+
+    override fun invalidate() {
+        usbPermissionManager.unregisterReceiver()
+        super.invalidate()
     }
 
     companion object {

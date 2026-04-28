@@ -154,6 +154,40 @@ Java_{package}_{ClassName}_{methodName}
 
 ---
 
+## Expo / React Native module wrapper (planned)
+
+When the driver API is stable, `sdr_core` will be wrapped as a standalone Expo module so it can be consumed by any Expo or bare React Native app via `npx expo install sdr-core`.
+
+### Why a module wrapper
+
+Currently the Rust library is integrated directly into the SDRGo app — the app owns the CMake build, the Kotlin bridge, and the TypeScript wrapper. That works for a single app but isn't distributable. An Expo module package moves all of that into a self-contained npm package that handles its own native build, so consumers get everything with one install command.
+
+### Steps to create the module
+
+1. **Scaffold the package**
+
+   ```bash
+   npx create-expo-module sdr-core --no-example
+   ```
+
+2. **Move the Rust source** into `sdr-core/rust/` alongside `Cargo.toml` and `src/lib.rs`
+
+3. **Move the Kotlin bridge** — copy `SdrModule.kt` into the module's Android source tree; migrate from `ReactContextBaseJavaModule` to expo-modules-core's `Module` class so Expo handles registration automatically
+
+4. **Move the CMake setup** — the module's `android/CMakeLists.txt` owns the Rust IMPORTED library and the `ReactNative-application.cmake` include; the app's `build.gradle` drops its `externalNativeBuild` block entirely
+
+5. **Move the TypeScript wrapper** — `SdrModule.ts` (including the `driverError` availability check and all public methods) becomes the module's JS entry point
+
+6. **Add a build hook** — write an Expo config plugin (`plugin/src/index.ts`) that runs `build-rust.sh` for the target ABI as part of `expo prebuild`, so the `.so` is always compiled before the Android build starts
+
+7. **Publish to npm** — update the SDRGo app to `npx expo install sdr-core` and import from the package instead of the local `./src/modules/SdrModule`
+
+### Pure native Android consumers
+
+The Kotlin JNI bridge and compiled `.so` can be distributed as an Android AAR independently of the React Native layer. The JNI function signatures in `src/lib.rs` are stable C ABI and have no React Native dependency.
+
+---
+
 ## Publishing to crates.io
 
 When the API reaches stability (v1.0.0):
