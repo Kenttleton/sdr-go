@@ -1,11 +1,8 @@
-/// Automatic Gain Control
-/// Normalizes signal amplitude so downstream demodulators
-/// don't need to worry about signal strength variation
 pub struct Agc {
-    gain: f32,
+    pub gain: f32,
     target: f32,
-    attack: f32,   // how fast gain decreases on loud signals
-    decay: f32,    // how fast gain increases on quiet signals
+    attack: f32,
+    decay: f32,
 }
 
 impl Agc {

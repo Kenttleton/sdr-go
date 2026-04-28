@@ -6,8 +6,9 @@ use parking_lot::Mutex;
 pub struct DeviceConfig {
     pub frequency_hz: u32,
     pub sample_rate: u32,
-    pub gain_db: Option<f32>, // None = auto gain
+    pub gain_db: Option<f32>,
     pub bias_tee: bool,
+    pub audio_sample_rate: u32,
 }
 
 impl Default for DeviceConfig {
@@ -17,6 +18,7 @@ impl Default for DeviceConfig {
             sample_rate: 2_048_000,    // 2.048 MSPS — standard RTL-SDR rate
             gain_db: None,             // auto gain
             bias_tee: false,
+            audio_sample_rate: 96_000  // 96kHz default
         }
     }
 }
@@ -98,3 +100,8 @@ impl SdrDevice {
         Arc::clone(&self.inner)
     }
 }
+
+// SAFETY: RtlSdr contains a Box<dyn Tuner> which is not auto-Send.
+// We guarantee single-threaded access via the Mutex<Option<RtlSdr>>
+// wrapper — no two threads can hold a reference simultaneously.
+unsafe impl Send for SdrDevice {}
