@@ -29,6 +29,11 @@ extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
     ex.autolinkLibrariesFromCommand(expoAutolinking.rnConfigCommand)
   }
 }
+// Point autolinking at the correct app dir and the hoisted monorepo node_modules.
+// Without this, the resolve command runs from android/ with no search paths → finds nothing.
+def sdrgoApp = settings.startParameter.projectProperties.get('sdrgoApp') ?: (System.getenv('SDRGO_APP') ?: 'analyzer')
+expoAutolinking.projectRoot = new File(rootDir.parentFile, "apps/${sdrgoApp}")
+expoAutolinking.searchPaths = [new File(rootDir.parentFile, "node_modules").absolutePath]
 expoAutolinking.useExpoModules()
 
 rootProject.name = 'sdrgo'

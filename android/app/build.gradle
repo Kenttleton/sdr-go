@@ -1,8 +1,11 @@
 apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
+apply plugin: "expo-autolinking"
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
+// Which app flavor to build — set via -PsdrgoApp=<name> or SDRGO_APP env var
+def sdrgoApp = findProperty('sdrgoApp') ?: (System.getenv('SDRGO_APP') ?: 'analyzer')
 
 // Rust cross-compilation triple → Android ABI directory name
 def rustAbiMap = [
@@ -35,9 +38,9 @@ preBuild.dependsOn copyRustLibs
  * By default you don't need to apply any configuration, just uncomment the lines you need.
  */
 react {
-    entryFile = file(["node", "-e", "require('expo/scripts/resolveAppEntry')", projectRoot, "android", "absolute"].execute(null, rootDir).text.trim())
+    entryFile = file(["node", "-e", "require('expo/scripts/resolveAppEntry')", "${projectRoot}/apps/${sdrgoApp}", "android", "absolute"].execute(null, rootDir).text.trim())
     reactNativeDir = new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
-    hermesCommand = new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/sdks/hermesc/%OS-BIN%/hermesc"
+    hermesCommand = new File(["node", "--print", "require.resolve('hermes-compiler/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/hermesc/%OS-BIN%/hermesc"
     codegenDir = new File(["node", "--print", "require.resolve('@react-native/codegen/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
 
     enableBundleCompression = (findProperty('android.enableBundleCompression') ?: false).toBoolean()
@@ -58,7 +61,7 @@ react {
     //   The list of variants to that are debuggable. For those we're going to
     //   skip the bundling of the JS bundle and the assets. By default is just 'debug'.
     //   If you add flavors like lite, prod, etc. you'll have to list your debuggableVariants.
-    // debuggableVariants = ["liteDebug", "prodDebug"]
+    debuggableVariants = ["analyzerDebug", "fmDebug", "airDebug", "hamDebug", "noaaDebug"]
 
     /* Bundling */
     //   A list containing the node command and its flags. Default is just 'node'.
@@ -127,6 +130,40 @@ android {
                 cppFlags ""
                 arguments "-DANDROID_STL=c++_shared"
             }
+        }
+    }
+    flavorDimensions "app"
+
+    productFlavors {
+        analyzer {
+            dimension "app"
+            applicationIdSuffix ".analyzer"
+            versionNameSuffix "-analyzer"
+            resValue "string", "app_name", "SDRGo Analyzer"
+        }
+        fm {
+            dimension "app"
+            applicationIdSuffix ".fm"
+            versionNameSuffix "-fm"
+            resValue "string", "app_name", "SDRGo FM"
+        }
+        air {
+            dimension "app"
+            applicationIdSuffix ".air"
+            versionNameSuffix "-air"
+            resValue "string", "app_name", "SDRGo Air"
+        }
+        ham {
+            dimension "app"
+            applicationIdSuffix ".ham"
+            versionNameSuffix "-ham"
+            resValue "string", "app_name", "SDRGo Ham"
+        }
+        noaa {
+            dimension "app"
+            applicationIdSuffix ".noaa"
+            versionNameSuffix "-noaa"
+            resValue "string", "app_name", "SDRGo NOAA"
         }
     }
     signingConfigs {

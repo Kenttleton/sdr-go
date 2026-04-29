@@ -23,6 +23,8 @@ class SdrModule(reactContext: ReactApplicationContext) :
     private var audioTrack: AudioTrack? = null
     private var audioJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO)
+    private val waveformBuffer = FloatArray(512)
+    @Volatile private var waveformReady = false
 
     init {
         usbPermissionManager.registerReceiver()
@@ -149,9 +151,32 @@ class SdrModule(reactContext: ReactApplicationContext) :
                         pcm, 0, pcm.size,
                         AudioTrack.WRITE_NON_BLOCKING
                     )
+                    // Downsample PCM to 512 points for waveform display
+                    // Take every Nth stereo frame (interleaved L/R)
+                    // Use left channel only for waveform
+                    val step = maxOf(1, pcm.size / (512 * 2))
+                    for (i in 0 until 512) {
+                        val idx = (i * step * 2).coerceAtMost(pcm.size - 2)
+                        waveformBuffer[i] = pcm[idx] // left channel
+                    }
+                    waveformReady = true
                 }
             }
         }
+    }
+
+    @ReactMethod
+    fun getWaveformBuffer(promise: Promise) {
+        if (!waveformReady) {
+            promise.resolve(null)
+            return
+        }
+        // Convert to WritableArray for React Native bridge
+        val arr = com.facebook.react.bridge.Arguments.createArray()
+        for (f in waveformBuffer) {
+            arr.pushDouble(f.toDouble())
+        }
+        promise.resolve(arr)
     }
 
     override fun invalidate() {

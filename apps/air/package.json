@@ -1,0 +1,26 @@
+{
+  "name": "@sdrgo/air",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "SDRGO_APP=air expo start .",
+    "android": "cd ../../android && ./gradlew installAirDebug -PsdrgoApp=air",
+    "build": "cd ../../android && ./gradlew assembleAirDebug -PsdrgoApp=air",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --ext .ts,.tsx"
+  },
+  "dependencies": {
+    "@sdrgo/ui-core": "*",
+    "expo": "*",
+    "react": "*",
+    "react-native": "*",
+    "@react-navigation/native": "*",
+    "@react-navigation/native-stack": "*",
+    "react-native-safe-area-context": "*",
+    "react-native-screens": "*",
+    "@shopify/react-native-skia": "*"
+  },
+  "devDependencies": {
+    "typescript": "~5.3.0"
+  }
+}

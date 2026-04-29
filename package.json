@@ -1,23 +1,49 @@
 {
-  "name": "sdr-go",
-  "version": "1.0.0",
-  "main": "index.js",
-  "scripts": {
-    "start": "expo start --dev-client",
-    "android": "expo run:android",
-    "ios": "expo run:ios",
-    "web": "expo start --web"
-  },
-  "dependencies": {
-    "expo": "~54.0.33",
-    "expo-status-bar": "~3.0.9",
-    "react": "^19.1.0",
-    "react-native": "0.81.5",
-    "react-native-safe-area-context": "^5.7.0",
-    "typescript": "^5.9.3"
-  },
+  "name": "sdrgo",
+  "version": "0.0.1",
   "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build:rust": "./scripts/build-rust.sh",
+    "build:analyzer": "turbo run build --filter=@sdrgo/analyzer",
+    "build:fm": "turbo run build --filter=@sdrgo/fm",
+    "build:air": "turbo run build --filter=@sdrgo/air",
+    "build:ham": "turbo run build --filter=@sdrgo/ham",
+    "build:noaa": "turbo run build --filter=@sdrgo/noaa",
+    "build:all": "turbo run build",
+    "dev:analyzer": "SDRGO_APP=analyzer node_modules/.bin/expo start apps/analyzer --android --dev-client",
+    "dev:fm": "SDRGO_APP=fm node_modules/.bin/expo start apps/fm --android --dev-client",
+    "dev:air": "SDRGO_APP=air node_modules/.bin/expo start apps/air --android --dev-client",
+    "dev:ham": "SDRGO_APP=ham node_modules/.bin/expo start apps/ham --android --dev-client",
+    "dev:noaa": "SDRGO_APP=noaa node_modules/.bin/expo start apps/noaa --android --dev-client",
+    "android:analyzer": "cd android && ./gradlew installAnalyzerDebug -PsdrgoApp=analyzer",
+    "android:fm": "cd android && ./gradlew installFmDebug -PsdrgoApp=fm",
+    "android:air": "cd android && ./gradlew installAirDebug -PsdrgoApp=air",
+    "android:ham": "cd android && ./gradlew installHamDebug -PsdrgoApp=ham",
+    "android:noaa": "cd android && ./gradlew installNoaaDebug -PsdrgoApp=noaa",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck"
+  },
   "devDependencies": {
-    "@types/react": "^19.2.14"
+    "turbo": "latest",
+    "typescript": "~5.3.0"
+  },
+  "packageManager": "npm@11.9.0",
+  "dependencies": {
+    "@shopify/react-native-skia": "2.4.18",
+    "babel-preset-expo": "~55.0.18",
+    "expo-dev-client": "*",
+    "react": "19.2.0",
+    "react-native": "0.83.6",
+    "react-native-reanimated": "4.2.1",
+    "react-native-safe-area-context": "~5.6.2",
+    "react-native-screens": "~4.23.0",
+    "react-native-worklets": "~0.7.4"
+  },
+  "overrides": {
+    "react-native-worklets": "~0.7.4"
   }
 }

@@ -35,6 +35,9 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
+# Turborepo
+.turbo/
+
 # Android build artifacts
 android/.gradle/
 android/build/

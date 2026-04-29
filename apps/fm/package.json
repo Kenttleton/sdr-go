@@ -1,0 +1,26 @@
+{
+  "name": "@sdrgo/fm",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "SDRGO_APP=fm expo start .",
+    "android": "cd ../../android && ./gradlew installFmDebug -PsdrgoApp=fm",
+    "build": "cd ../../android && ./gradlew assembleFmDebug -PsdrgoApp=fm",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --ext .ts,.tsx"
+  },
+  "dependencies": {
+    "@sdrgo/ui-core": "*",
+    "expo": "*",
+    "react": "*",
+    "react-native": "*",
+    "@react-navigation/native": "*",
+    "@react-navigation/native-stack": "*",
+    "react-native-safe-area-context": "*",
+    "react-native-screens": "*",
+    "@shopify/react-native-skia": "*"
+  },
+  "devDependencies": {
+    "typescript": "~5.3.0"
+  }
+}

@@ -4,10 +4,8 @@ project("sdrgo")
 set(CMAKE_VERBOSE_MAKEFILE ON)
 set(PACKAGE_NAME "sdrgo")
 
-# Rust pre-built library (compiled by scripts/build-rust.sh)
-set(RUST_LIB_DIR
-    "${CMAKE_SOURCE_DIR}/../../../../../../rust/sdr_core/target/${ANDROID_ABI}/release"
-)
+# Rust pre-built library — either copied by copyRustLibs or committed to jniLibs
+set(RUST_LIB_DIR "${CMAKE_SOURCE_DIR}/../jniLibs/${ANDROID_ABI}")
 
 add_library(sdr_core SHARED IMPORTED)
 set_target_properties(sdr_core PROPERTIES

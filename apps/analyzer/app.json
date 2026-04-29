@@ -1,0 +1,10 @@
+{
+  "expo": {
+    "name": "SDRGo Analyzer",
+    "slug": "sdrgo-analyzer",
+    "version": "1.0.0",
+    "android": {
+      "package": "com.sdrgo.analyzer"
+    }
+  }
+}
