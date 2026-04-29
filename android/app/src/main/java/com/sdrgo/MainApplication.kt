@@ -10,6 +10,7 @@ import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative
 import com.facebook.react.common.ReleaseLevel
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint
 
+import com.facebook.soloader.SoLoader
 import expo.modules.ApplicationLifecycleDispatcher
 import expo.modules.ExpoReactHostFactory
 
@@ -30,6 +31,10 @@ class MainApplication : Application(), ReactApplication {
     }
     System.loadLibrary("sdr_core")
     loadReactNative(this)
+    // SoLoader is now initialized. Explicitly load the app's C++ module (libsdrgo.so)
+    // because DefaultSoLoader only looks for "appmodules" and silently ignores failures.
+    // libsdrgo.so contains the OnLoad.cpp that installs JSI bindings (PlatformConstants, etc.).
+    SoLoader.loadLibrary("sdrgo")
     ApplicationLifecycleDispatcher.onApplicationCreate(this)
   }
 
