@@ -56,11 +56,11 @@ npm run build:rust
 Start the Metro bundler for a specific app, then run the Android install in a second terminal. The app will connect to Metro over USB/Wi-Fi for hot reload.
 
 ```bash
-# Terminal 1 — Metro bundler
-npm run dev:analyzer     # or dev:fm, dev:air, dev:ham, dev:noaa
-
-# Terminal 2 — install to connected device or running emulator
+# Terminal 1 — install to connected device or running emulator
 npm run android:analyzer # or android:fm, android:air, android:ham, android:noaa
+
+# Terminal 2 — Metro bundler
+npm run dev:analyzer     # or dev:fm, dev:air, dev:ham, dev:noaa
 ```
 
 The `android:*` scripts call `./gradlew install<Flavor>Debug` which skips JS bundling and connects to Metro instead.
