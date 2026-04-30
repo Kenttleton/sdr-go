@@ -6,11 +6,11 @@ export type { Theme, ThemeMode } from './theme';
 // Native module wrapper — shared across all apps
 export { default as SdrModule, driverError } from './modules/SdrModule';
 
+// RDS + signal module — mock during development, native when ready
+export * from './modules/RdsModule';
+
 // Shared hooks
 export { useWaveform } from './hooks/useWaveForm';
 export { useUsbDevice } from './hooks/useUSBDevice';
-
-// Shared components (added as we build them)
-// export { Waveform } from './components/Waveform';
-// export { FrequencyDisplay } from './components/FrequencyDisplay';
-// export { SignalStrength } from './components/SignalStrength';
+export { usePresets } from './hooks/usePresets';
+export type { Preset } from './hooks/usePresets';

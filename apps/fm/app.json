@@ -1,0 +1,10 @@
+{
+  "expo": {
+    "name": "sdrgo-fm",
+    "slug": "sdrgo-fm",
+    "version": "0.0.1",
+    "android": {
+      "package": "com.sdrgo.fm"
+    }
+  }
+}

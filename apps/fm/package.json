@@ -18,6 +18,7 @@
     "@react-navigation/native-stack": "*",
     "react-native-safe-area-context": "*",
     "react-native-screens": "*",
+    "@react-native-async-storage/async-storage": "^1.23.1",
     "@shopify/react-native-skia": "*"
   },
   "devDependencies": {
