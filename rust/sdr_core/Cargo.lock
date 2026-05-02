@@ -487,6 +487,7 @@ version = "0.1.0"
 dependencies = [
  "android_logger",
  "jni",
+ "libusb1-sys",
  "log",
  "num-complex",
  "once_cell",

@@ -15,6 +15,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 jni = "0.21"
+libusb1-sys = "0.7"
 rtl-sdr-rs = { version = "0.3", features = ["rtl_sdr_blog"] }
 num-complex = "0.4"
 rustfft = "6"

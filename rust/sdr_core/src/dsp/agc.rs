@@ -17,7 +17,10 @@ impl Agc {
 
     /// Sensible defaults for FM broadcast
     pub fn default_fm() -> Self {
-        Self::new(0.5, 0.001, 0.0001)
+        // attack: ~48ms to -6dB — slow enough not to crush transients
+        // decay: ~500ms to +6dB — prevents over-gain on quiet passages before a loud section
+        // target: 0.3 leaves headroom; audio clips at 1.0 and RTL-SDR auto-gain is unpredictable
+        Self::new(0.3, 0.0002, 0.00002)
     }
 
     /// Sensible defaults for air band AM
@@ -36,8 +39,9 @@ impl Agc {
             self.gain *= 1.0 + self.decay;
         }
 
-        // Clamp gain to sane range — prevents runaway on silence
-        self.gain = self.gain.clamp(0.001, 1000.0);
+        // Clamp gain — upper limit prevents over-gain on quiet passages from
+        // causing clipping when a loud section arrives before AGC responds.
+        self.gain = self.gain.clamp(0.001, 10.0);
         output
     }
 
