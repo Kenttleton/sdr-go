@@ -47,6 +47,10 @@ function EqSlider({ value, label, freq, onChange, theme }: SliderProps) {
   const animValue = useRef(value);
   const startY = useRef(0);
   const startValue = useRef(value);
+  // Always holds the latest onChange — PanResponder is created once (useRef) so its
+  // closure would otherwise capture the stale callback from the first render.
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
 
   useEffect(() => {
     Animated.spring(anim, {
@@ -88,7 +92,7 @@ function EqSlider({ value, label, freq, onChange, theme }: SliderProps) {
         const newVal = Math.max(EQ_MIN, Math.min(EQ_MAX, yToValue(newY)));
         anim.setValue(newVal);
         animValue.current = newVal;
-        onChange(newVal);
+        onChangeRef.current(newVal);
       },
     }),
   ).current;

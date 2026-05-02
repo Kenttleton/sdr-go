@@ -6,14 +6,16 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbManager
 import android.os.Build
+import android.util.Log
 
 class UsbPermissionManager(private val context: Context) {
 
     companion object {
-        private const val ACTION_USB_PERMISSION =
-            "com.sdrgo.USB_PERMISSION"
+        private const val ACTION_USB_PERMISSION = "com.sdrgo.USB_PERMISSION"
+        private const val TAG = "SdrUsbPermission"
     }
 
     private val usbManager =
@@ -22,35 +24,66 @@ class UsbPermissionManager(private val context: Context) {
     // Callback invoked on permission result
     private var onPermissionResult: ((fd: Int?) -> Unit)? = null
 
+    // Invoked when the RTL-SDR device is physically unplugged
+    var onDeviceDetached: (() -> Unit)? = null
+
+    // Held so we can release the USB interface claim on closeConnection()
+    private var activeConnection: UsbDeviceConnection? = null
+
     private val permissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action == ACTION_USB_PERMISSION) {
-                val device: UsbDevice? =
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        intent.getParcelableExtra(
-                            UsbManager.EXTRA_DEVICE,
-                            UsbDevice::class.java
-                        )
+            when (intent.action) {
+                ACTION_USB_PERMISSION -> {
+                    val device: UsbDevice? =
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            intent.getParcelableExtra(
+                                UsbManager.EXTRA_DEVICE,
+                                UsbDevice::class.java
+                            )
+                        } else {
+                            @Suppress("DEPRECATION")
+                            intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                        }
+
+                    val granted = intent.getBooleanExtra(
+                        UsbManager.EXTRA_PERMISSION_GRANTED, false
+                    )
+
+                    Log.d(TAG, "USB permission result: granted=$granted device=${device?.deviceName}")
+
+                    if (granted && device != null) {
+                        val fd = openDevice(device)
+                        Log.d(TAG, "Opened device fd=$fd")
+                        onPermissionResult?.invoke(fd)
                     } else {
-                        @Suppress("DEPRECATION")
-                        intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                        Log.w(TAG, "USB permission denied or device null")
+                        onPermissionResult?.invoke(null)
                     }
-
-                val granted = intent.getBooleanExtra(
-                    UsbManager.EXTRA_PERMISSION_GRANTED, false
-                )
-
-                if (granted && device != null) {
-                    onPermissionResult?.invoke(openDevice(device))
-                } else {
-                    onPermissionResult?.invoke(null)
+                }
+                UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                    val device: UsbDevice? =
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            intent.getParcelableExtra(
+                                UsbManager.EXTRA_DEVICE,
+                                UsbDevice::class.java
+                            )
+                        } else {
+                            @Suppress("DEPRECATION")
+                            intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                        }
+                    if (device != null && isRtlSdrDevice(device)) {
+                        Log.i(TAG, "RTL-SDR unplugged: ${device.deviceName}")
+                        onDeviceDetached?.invoke()
+                    }
                 }
             }
         }
     }
 
     fun registerReceiver() {
-        val filter = IntentFilter(ACTION_USB_PERMISSION)
+        val filter = IntentFilter(ACTION_USB_PERMISSION).apply {
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.registerReceiver(
                 permissionReceiver,
@@ -70,21 +103,41 @@ class UsbPermissionManager(private val context: Context) {
         }
     }
 
+    /** Release the USB interface claim so other apps (or this app after a restart) can open the device. */
+    fun closeConnection() {
+        activeConnection?.let {
+            Log.d(TAG, "Closing UsbDeviceConnection")
+            it.close()
+        }
+        activeConnection = null
+    }
+
     /// Find first RTL-SDR device and request permission
     fun requestPermission(onResult: (fd: Int?) -> Unit) {
         onPermissionResult = onResult
 
+        val allDevices = usbManager.deviceList
+        Log.d(TAG, "USB devices attached: ${allDevices.size}")
+        allDevices.values.forEach { d ->
+            Log.d(TAG, "  device vid=0x${d.vendorId.toString(16)} pid=0x${d.productId.toString(16)} name=${d.deviceName}")
+        }
+
         val device = findRtlSdrDevice()
         if (device == null) {
+            Log.w(TAG, "No RTL-SDR device found in device list")
             onResult(null)
             return
         }
 
+        Log.d(TAG, "Found RTL-SDR: vid=0x${device.vendorId.toString(16)} pid=0x${device.productId.toString(16)}")
+
         if (usbManager.hasPermission(device)) {
-            // Already have permission — open immediately
+            Log.d(TAG, "Already have USB permission, opening device")
             onResult(openDevice(device))
             return
         }
+
+        Log.d(TAG, "Requesting USB permission (SDK=${Build.VERSION.SDK_INT})")
 
         val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
@@ -94,11 +147,12 @@ class UsbPermissionManager(private val context: Context) {
 
         val permissionIntent = PendingIntent.getBroadcast(
             context, 0,
-            Intent(ACTION_USB_PERMISSION),
+            Intent(ACTION_USB_PERMISSION).apply { `package` = context.packageName },
             flags
         )
 
         usbManager.requestPermission(device, permissionIntent)
+        Log.d(TAG, "USB permission dialog shown")
     }
 
     private fun findRtlSdrDevice(): UsbDevice? {
@@ -126,7 +180,9 @@ class UsbPermissionManager(private val context: Context) {
     }
 
     private fun openDevice(device: UsbDevice): Int? {
+        closeConnection() // release any previous claim first
         val connection = usbManager.openDevice(device) ?: return null
+        activeConnection = connection
         return connection.fileDescriptor
     }
 }

@@ -1,65 +1,94 @@
+use super::hardware::SdrHardware;
 use num_complex::Complex;
-use std::sync::Arc;
 use parking_lot::Mutex;
-use rtl_sdr_rs::RtlSdr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
+static FILL_OK_COUNT: AtomicU64 = AtomicU64::new(0);
+static FILL_ERR_COUNT: AtomicU64 = AtomicU64::new(0);
 
 pub type IqSample = Complex<f32>;
 pub type IqBuffer = Vec<IqSample>;
 
 const RING_BUFFER_SIZE: usize = 1024 * 1024; // 1M samples
-const READ_SIZE: usize = 16384;              // 16K samples per USB read
 
 pub struct IqStream {
-    inner: Arc<Mutex<Option<RtlSdr>>>,
+    inner: Arc<Mutex<Option<Box<dyn SdrHardware>>>>,
     ring: Vec<IqSample>,
     write_pos: usize,
     read_pos: usize,
     overflows: u64,
+    read_size: usize,
 }
 
 impl IqStream {
-    pub fn new(inner: Arc<Mutex<Option<RtlSdr>>>) -> Self {
+    pub fn new(
+        inner: Arc<Mutex<Option<Box<dyn SdrHardware>>>>,
+        hardware_read_size: usize,
+        override_size: Option<usize>,
+    ) -> Self {
+        let read_size = match override_size {
+            None => hardware_read_size,
+            Some(req) if req <= hardware_read_size => req,
+            Some(req) => {
+                log::warn!(
+                    "IqStream: requested read_size={} exceeds hardware capacity={}, clamping",
+                    req,
+                    hardware_read_size
+                );
+                hardware_read_size
+            }
+        };
+        log::info!(
+            "IqStream: read_size={} hardware_capacity={} ring_size={}",
+            read_size,
+            hardware_read_size,
+            RING_BUFFER_SIZE,
+        );
         Self {
             inner,
             ring: vec![Complex::new(0.0, 0.0); RING_BUFFER_SIZE],
             write_pos: 0,
             read_pos: 0,
             overflows: 0,
+            read_size,
         }
     }
 
     pub fn fill(&mut self) -> Result<usize, String> {
         let mut guard = self.inner.lock();
-        let sdr = guard.as_mut().ok_or("Device not open")?;
-
-        let mut raw = vec![0u8; READ_SIZE * 2]; // allocate buffer
-        let bytes_read = sdr.read_sync(&mut raw)
-            .map_err(|e| e.to_string())?;
-
-        let samples_written = bytes_read / 2;
-
-        for chunk in raw[..bytes_read].chunks_exact(2) {
-            let i = (chunk[0] as f32 - 127.5) / 127.5;
-            let q = (chunk[1] as f32 - 127.5) / 127.5;
-
+        let hw = guard.as_mut().ok_or("Device not open")?;
+        let samples = hw.read_samples(self.read_size).map_err(|e| {
+            let n = FILL_ERR_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+            log::warn!("IqStream::fill error #{}: {}", n, e);
+            e.to_string()
+        })?;
+        let ok_count = FILL_OK_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+        let samples_written = samples.len();
+        if ok_count <= 5 || ok_count % 500 == 0 {
+            log::info!(
+                "IqStream::fill #{}: {} samples, ring available={}",
+                ok_count,
+                samples_written,
+                self.available()
+            );
+        }
+        for sample in samples {
             let next = (self.write_pos + 1) % RING_BUFFER_SIZE;
             if next == self.read_pos {
                 self.overflows += 1;
                 self.read_pos = (self.read_pos + 1) % RING_BUFFER_SIZE;
             }
-            self.ring[self.write_pos] = Complex::new(i, q);
+            self.ring[self.write_pos] = sample;
             self.write_pos = next;
         }
-
         Ok(samples_written)
     }
 
-    /// Drain up to `count` samples from ring buffer
     pub fn drain(&mut self, count: usize) -> IqBuffer {
         let available = self.available();
         let to_read = count.min(available);
         let mut out = Vec::with_capacity(to_read);
-
         for _ in 0..to_read {
             out.push(self.ring[self.read_pos]);
             self.read_pos = (self.read_pos + 1) % RING_BUFFER_SIZE;
@@ -77,5 +106,9 @@ impl IqStream {
 
     pub fn overflows(&self) -> u64 {
         self.overflows
+    }
+
+    pub fn flush(&mut self) {
+        self.read_pos = self.write_pos;
     }
 }

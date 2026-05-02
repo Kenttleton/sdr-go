@@ -1,24 +1,73 @@
-use rtl_sdr_rs::{DeviceId, RtlSdr, TunerGain};
-use std::{sync::Arc, error::Error};
+use super::hardware::{HardwareError, RtlSdrHardware, SdrHardware};
+use libusb1_sys::{constants::*, *};
 use parking_lot::Mutex;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct DeviceConfig {
     pub frequency_hz: u32,
     pub sample_rate: u32,
-    pub gain_db: Option<f32>,
+    pub gain_tenths: Option<i32>,
     pub bias_tee: bool,
     pub audio_sample_rate: u32,
+}
+
+// Probe the USB bulk IN endpoint (0x81) to determine the natural transfer size for the device on this connection.
+fn probe_bulk_transfer_samples(fd: i32) -> usize {
+    const FALLBACK: usize = 8_192;
+    unsafe {
+        let mut ctx = std::ptr::null_mut();
+        if libusb_init(&mut ctx) != LIBUSB_SUCCESS {
+            return FALLBACK;
+        }
+
+        let mut handle = std::ptr::null_mut();
+        let r = libusb_wrap_sys_device(ctx, fd as isize as *mut std::os::raw::c_int, &mut handle);
+        if r != LIBUSB_SUCCESS {
+            libusb_exit(ctx);
+            return FALLBACK;
+        }
+
+        let device = libusb_get_device(handle);
+        let packet_bytes = libusb_get_max_packet_size(device, 0x81);
+        let speed = libusb_get_device_speed(device);
+
+        libusb_close(handle);
+        libusb_exit(ctx);
+
+        if packet_bytes <= 0 {
+            return FALLBACK;
+        }
+
+        // Batch packets per transfer, targeting ~32 KB, tuned by USB speed class.
+        let batch = match speed {
+            LIBUSB_SPEED_FULL => 256,
+            LIBUSB_SPEED_HIGH => 64,
+            LIBUSB_SPEED_SUPER | LIBUSB_SPEED_SUPER_PLUS => 32,
+            _ => 64,
+        };
+
+        let total_bytes = (packet_bytes as usize) * batch;
+        let samples = total_bytes / 2;
+        log::info!(
+            "probe_bulk_transfer_samples: speed={} packet_bytes={} batch={} → {} IQ samples",
+            speed,
+            packet_bytes,
+            batch,
+            samples
+        );
+        samples
+    }
 }
 
 impl Default for DeviceConfig {
     fn default() -> Self {
         Self {
-            frequency_hz: 100_000_000, // 100 MHz default
-            sample_rate: 2_048_000,    // 2.048 MSPS — standard RTL-SDR rate
-            gain_db: None,             // auto gain
+            frequency_hz: 100_000_000,
+            sample_rate: 2_048_000,
+            gain_tenths: None,
             bias_tee: false,
-            audio_sample_rate: 96_000  // 96kHz default
+            audio_sample_rate: 96_000,
         }
     }
 }
@@ -31,77 +80,112 @@ pub enum DeviceError {
     FrequencyError(String),
     #[error("Failed to set sample rate: {0}")]
     SampleRateError(String),
+    #[error("Failed to set gain: {0}")]
+    GainError(String),
+    #[error("Failed to read samples: {0}")]
+    ReadError(String),
     #[error("Device not open")]
     NotOpen,
 }
 
+impl From<HardwareError> for DeviceError {
+    fn from(e: HardwareError) -> Self {
+        match e {
+            HardwareError::OpenError(s) => DeviceError::OpenFailed(s),
+            HardwareError::FrequencyError(s) => DeviceError::FrequencyError(s),
+            HardwareError::SampleRateError(s) => DeviceError::SampleRateError(s),
+            HardwareError::GainError(s) => DeviceError::GainError(s),
+            HardwareError::ReadError(s) => DeviceError::ReadError(s),
+        }
+    }
+}
+
 pub struct SdrDevice {
-    inner: Arc<Mutex<Option<RtlSdr>>>,
+    inner: Arc<Mutex<Option<Box<dyn SdrHardware>>>>,
     config: DeviceConfig,
+    bulk_transfer_samples: usize,
 }
 
 impl SdrDevice {
-    /// Open device from Android file descriptor passed via JNI
-    pub fn open_from_fd(fd: i32, config: DeviceConfig) -> Result<Self, DeviceError> {
-        let sdr = RtlSdr::open(DeviceId::Fd(fd))
-            .map_err(|e| DeviceError::OpenFailed(e.to_string()))?;
+    pub fn open(fd: i32, config: DeviceConfig) -> Result<Self, DeviceError> {
+        log::info!("SdrDevice: opening fd={}", fd);
+        let bulk_transfer_samples = probe_bulk_transfer_samples(fd);
+        let mut hw = RtlSdrHardware::open(fd)?;
 
-        let device = Self {
-            inner: Arc::new(Mutex::new(Some(sdr))),
-            config: config.clone(),
+        hw.set_center_freq(config.frequency_hz)?;
+        log::info!("SdrDevice: tuned to {} Hz", config.frequency_hz);
+
+        hw.set_sample_rate(config.sample_rate)?;
+        log::info!("SdrDevice: sample rate {} sps", config.sample_rate);
+
+        let (tenths, auto) = match config.gain_tenths {
+            Some(g) => (g, false),
+            None => (0, true),
         };
+        hw.set_gain(tenths, auto)?;
+        log::info!("SdrDevice: gain tenths={} auto={}", tenths, auto);
 
-        device.apply_config(&config)?;
-        Ok(device)
+        Ok(Self {
+            inner: Arc::new(Mutex::new(Some(Box::new(hw)))),
+            config,
+            bulk_transfer_samples,
+        })
+    }
+
+    pub fn from_hardware(hw: Box<dyn SdrHardware>, config: DeviceConfig) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(Some(hw))),
+            config,
+            bulk_transfer_samples: 8_192,
+        }
+    }
+
+    pub fn bulk_transfer_samples(&self) -> usize {
+        self.bulk_transfer_samples
     }
 
     pub fn set_frequency(&mut self, freq_hz: u32) -> Result<(), DeviceError> {
         let mut guard = self.inner.lock();
-        let sdr = guard.as_mut().ok_or(DeviceError::NotOpen)?;
-        sdr.set_center_freq(freq_hz)
-            .map_err(|e| DeviceError::FrequencyError(e.to_string()))?;
+        let hw = guard.as_mut().ok_or(DeviceError::NotOpen)?;
+        hw.set_center_freq(freq_hz)?;
         self.config.frequency_hz = freq_hz;
         Ok(())
     }
 
     pub fn set_sample_rate(&mut self, rate: u32) -> Result<(), DeviceError> {
         let mut guard = self.inner.lock();
-        let sdr = guard.as_mut().ok_or(DeviceError::NotOpen)?;
-        sdr.set_sample_rate(rate)
-            .map_err(|e| DeviceError::SampleRateError(e.to_string()))?;
+        let hw = guard.as_mut().ok_or(DeviceError::NotOpen)?;
+        hw.set_sample_rate(rate)?;
         self.config.sample_rate = rate;
         Ok(())
+    }
+
+    pub fn set_gain(&mut self, tenths_db: i32, auto_gain: bool) -> Result<(), DeviceError> {
+        let mut guard = self.inner.lock();
+        let hw = guard.as_mut().ok_or(DeviceError::NotOpen)?;
+        hw.set_gain(tenths_db, auto_gain)?;
+        self.config.gain_tenths = if auto_gain { None } else { Some(tenths_db) };
+        Ok(())
+    }
+
+    pub fn available_gains(&self) -> Vec<i32> {
+        let guard = self.inner.lock();
+        match guard.as_ref() {
+            Some(hw) => hw.available_gains(),
+            None => vec![],
+        }
     }
 
     pub fn config(&self) -> &DeviceConfig {
         &self.config
     }
 
-    fn apply_config(&self, config: &DeviceConfig) -> Result<(), DeviceError> {
+    pub fn close(&mut self) {
         let mut guard = self.inner.lock();
-        let sdr = guard.as_mut().ok_or(DeviceError::NotOpen)?;
-
-        sdr.set_center_freq(config.frequency_hz)
-            .map_err(|e| DeviceError::FrequencyError(e.to_string()))?;
-
-        sdr.set_sample_rate(config.sample_rate)
-            .map_err(|e| DeviceError::SampleRateError(e.to_string()))?;
-
-        match config.gain_db {
-            Some(gain) => sdr.set_tuner_gain(TunerGain::Manual(gain as i32)),
-            None => sdr.set_tuner_gain(TunerGain::Auto),
-        }.map_err(|e| DeviceError::OpenFailed(e.to_string()))?;
-
-        Ok(())
+        *guard = None;
     }
 
-    /// Clone the inner Arc for stream access
-    pub(crate) fn inner(&self) -> Arc<Mutex<Option<RtlSdr>>> {
+    pub(crate) fn inner(&self) -> Arc<Mutex<Option<Box<dyn SdrHardware>>>> {
         Arc::clone(&self.inner)
     }
 }
-
-// SAFETY: RtlSdr contains a Box<dyn Tuner> which is not auto-Send.
-// We guarantee single-threaded access via the Mutex<Option<RtlSdr>>
-// wrapper — no two threads can hold a reference simultaneously.
-unsafe impl Send for SdrDevice {}

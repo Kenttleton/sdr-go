@@ -27,6 +27,7 @@ import {
 } from "react-native-safe-area-context";
 import { useTheme, usePresets } from "@sdrgo/ui-core";
 import type { Preset } from "@sdrgo/ui-core";
+import { useDevLogs, clearLogEntries } from "../dev/logger";
 
 interface Props {
   onClose: () => void;
@@ -293,8 +294,10 @@ export default function SettingsScreen({
     usePresets();
 
   const [activeTab, setActiveTab] = useState<
-    "presets" | "recordings" | "display" | "about"
+    "presets" | "recordings" | "display" | "about" | "logs"
   >("presets");
+
+  const { entries: logEntries } = useDevLogs();
 
   const fmPresets = getPresetsForBand("fm");
   const amPresets = getPresetsForBand("am");
@@ -336,7 +339,8 @@ export default function SettingsScreen({
               { key: "recordings", label: "Recordings" },
               { key: "display", label: "Display" },
               { key: "about", label: "About" },
-            ] as const
+              ...(__DEV__ ? [{ key: "logs" as const, label: "Logs" }] : []),
+            ] as { key: "presets" | "recordings" | "display" | "about" | "logs"; label: string }[]
           ).map((tab) => (
             <TouchableOpacity
               key={tab.key}
@@ -598,6 +602,65 @@ export default function SettingsScreen({
           </View>
         )}
 
+        {/* ── Logs (dev only) ── */}
+        {activeTab === "logs" && __DEV__ && (
+          <View style={s.section}>
+            <View style={s.logsHeader}>
+              <Text style={[s.sectionLabel, { color: theme.textSecondary }]}>
+                DEVICE LOG ({logEntries.length})
+              </Text>
+              <TouchableOpacity onPress={clearLogEntries}>
+                <Text style={[s.logsClearBtn, { color: theme.danger }]}>
+                  Clear
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {logEntries.length === 0 ? (
+              <View style={s.emptyState}>
+                <Text style={[s.emptyTitle, { color: theme.textSecondary }]}>
+                  No log entries yet
+                </Text>
+                <Text style={[s.emptyBody, { color: theme.textDim }]}>
+                  Trigger an action on the radio screen to see output here.
+                </Text>
+              </View>
+            ) : (
+              [...logEntries].reverse().map((entry) => (
+                <View
+                  key={entry.id}
+                  style={[s.logRow, { borderBottomColor: theme.border }]}
+                >
+                  <Text style={[s.logTime, { color: theme.textDim }]}>
+                    {entry.time}
+                  </Text>
+                  <Text
+                    style={[
+                      s.logLevel,
+                      {
+                        color:
+                          entry.level === "error"
+                            ? theme.danger
+                            : entry.level === "warn"
+                              ? theme.signal
+                              : theme.textDim,
+                      },
+                    ]}
+                  >
+                    {entry.level.toUpperCase()}
+                  </Text>
+                  <Text
+                    style={[s.logMessage, { color: theme.text }]}
+                    selectable
+                  >
+                    {entry.message}
+                  </Text>
+                </View>
+              ))
+            )}
+          </View>
+        )}
+
         {/* ── About ── */}
         {activeTab === "about" && (
           <View style={s.section}>
@@ -754,5 +817,37 @@ function styles(theme: any, insets: any) {
     aboutBody: { fontSize: 13, lineHeight: 18 },
     appName: { fontSize: 28, fontWeight: "800", letterSpacing: 3 },
     appVersion: { fontSize: 12, fontFamily: "monospace" },
+    logsHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+    },
+    logsClearBtn: { fontSize: 13, fontWeight: "700" },
+    logRow: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: 8,
+      paddingVertical: 6,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+    logTime: {
+      fontSize: 11,
+      fontFamily: "monospace",
+      paddingTop: 1,
+      width: 58,
+    },
+    logLevel: {
+      fontSize: 10,
+      fontWeight: "800",
+      fontFamily: "monospace",
+      paddingTop: 2,
+      width: 36,
+    },
+    logMessage: {
+      flex: 1,
+      fontSize: 12,
+      fontFamily: "monospace",
+      lineHeight: 17,
+    },
   });
 }

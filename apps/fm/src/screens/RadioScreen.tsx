@@ -24,6 +24,8 @@
  *   └──────────────────────────────────┘
  */
 
+import "../dev/logger"; // side-effect: patches console in __DEV__ builds
+
 import React, {
   useState,
   useEffect,
@@ -42,35 +44,27 @@ import {
   Platform,
   AppState,
   Modal,
-  ScrollView,
   Pressable,
-  Animated,
-  PanResponder,
 } from "react-native";
 import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 import {
-  Canvas,
-  Path,
-  Paint,
-  LinearGradient,
-  vec,
-  Rect,
-} from "@shopify/react-native-skia";
-import { useTheme, SdrModule, usePresets } from "@sdrgo/ui-core";
+  useTheme,
+  SdrModule,
+  SdrEventEmitter,
+  usePresets,
+} from "@sdrgo/ui-core";
 import {
   getRdsStationInfo,
   getSignalInfo,
-  getHardwareGainInfo,
   setHardwareGain,
   setEq,
   setMonoMode,
   scan,
   startRecording,
   stopRecording,
-  EQ_BANDS,
   DEFAULT_EQ,
   DEFAULT_GAIN_TENTHS,
   type RdsStationInfo,
@@ -111,14 +105,6 @@ function clampFrequency(hz: number, band: "fm" | "am"): number {
   return Math.round(clamped / step) * step;
 }
 
-function wrapFrequency(hz: number, band: "fm" | "am"): number {
-  const min = band === "fm" ? FM_MIN : AM_MIN;
-  const max = band === "fm" ? FM_MAX : AM_MAX;
-  if (hz > max) return min;
-  if (hz < min) return max;
-  return hz;
-}
-
 function makeRecordingName(
   hz: number,
   band: "fm" | "am",
@@ -135,13 +121,12 @@ function makeRecordingName(
 export default function RadioScreen() {
   const { theme, isDark } = useTheme();
   const insets = useSafeAreaInsets();
-  const s = useMemo(() => styles(theme, insets), [theme, insets]);
+  const s = useMemo(() => styles(theme), [theme]);
 
   // ── State ──────────────────────────────────────────────────────────────────
   const [band, setBand] = useState<"fm" | "am">("fm");
   const [frequencyHz, setFrequencyHz] = useState(88.5e6);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [waveformData, setWaveformData] = useState<number[]>(
     Array(512).fill(0),
@@ -153,8 +138,10 @@ export default function RadioScreen() {
   const [freqInputMode, setFreqInputMode] = useState(false);
   const [freqInputText, setFreqInputText] = useState("");
   const [isScanning, setIsScanning] = useState(false);
+  // FM app always uses Stations mode: 2.4 MSPS, 240 kHz intermediate, 48 kHz audio, RDS active
+  const stationsModeRef = useRef(true);
   const [visualMode, setVisualMode] = useState<"artistic" | "oscilloscope">(
-    "artistic",
+    "oscilloscope",
   );
   const [toast, setToast] = useState<{ message: string; sub?: string } | null>(
     null,
@@ -183,6 +170,33 @@ export default function RadioScreen() {
   useEffect(() => {
     bandRef.current = band;
   }, [band]);
+
+  // ── Native log bridge — routes onSdrLog events into the in-app console logger ─
+  useEffect(() => {
+    if (!SdrEventEmitter) return;
+    const sub = SdrEventEmitter.addListener(
+      "onSdrLog",
+      ({ level, message }: { level: string; message: string }) => {
+        if (level === "error") console.error(message);
+        else if (level === "warn") console.warn(message);
+        else console.log(message);
+      },
+    );
+    return () => sub.remove();
+  }, []);
+
+  // ── USB disconnect — native has already stopped playback, just reset UI ───────
+  // stopWaveformPolling is a stable useCallback([]) — safe to omit from deps.
+  useEffect(() => {
+    if (!SdrEventEmitter) return;
+    const sub = SdrEventEmitter.addListener("onUsbDeviceDetached", () => {
+      setIsPlaying(false);
+      setWaveformData(Array(512).fill(0));
+      setRdsInfo(null);
+      showToast("USB device disconnected", "Plug in the RTL-SDR and press play");
+    });
+    return () => sub.remove();
+  }, []);
 
   // ── App background / foreground ────────────────────────────────────────────
   useEffect(() => {
@@ -217,19 +231,20 @@ export default function RadioScreen() {
     }
   }, []);
 
-  // ── RDS polling ────────────────────────────────────────────────────────────
+  // ── RDS polling — only active when hardware is open on FM band ───────────────
   useEffect(() => {
+    if (!isPlaying || band !== "fm") {
+      setRdsInfo(null);
+      return;
+    }
     rdsTimer.current = setInterval(async () => {
-      const info = await getRdsStationInfo(
-        frequencyRef.current,
-        bandRef.current,
-      );
+      const info = await getRdsStationInfo(frequencyRef.current, "fm");
       setRdsInfo(info);
     }, 2000);
     return () => {
       if (rdsTimer.current) clearInterval(rdsTimer.current);
     };
-  }, []);
+  }, [isPlaying, band]);
 
   // ── Signal polling ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -258,10 +273,16 @@ export default function RadioScreen() {
           return;
         }
         const fd = await SdrModule.requestUsbPermission();
-        await SdrModule.startFm(fd, frequencyHz, 96000, !forceMono);
+        await SdrModule.startFm(
+          fd,
+          frequencyHz,
+          !forceMono,
+          stationsModeRef.current,
+        );
         setIsPlaying(true);
         startWaveformPolling();
       } catch (e: any) {
+        console.error("[startFm]", e?.message ?? e);
         showToast(
           "Could not start radio",
           e?.message ?? "Check USB connection",
@@ -344,40 +365,69 @@ export default function RadioScreen() {
   );
 
   // ── Scanning (long press) ──────────────────────────────────────────────────
+  // Scan is non-blocking — the native layer mutes audio, steps through
+  // frequencies, and fires DeviceEventEmitter events for progress/completion.
+  const scanSubscriptionsRef = useRef<{ remove: () => void }[]>([]);
+
+  const teardownScanListeners = useCallback(() => {
+    scanSubscriptionsRef.current.forEach((s) => s.remove());
+    scanSubscriptionsRef.current = [];
+  }, []);
+
   const startScan = useCallback(
-    async (direction: "up" | "down") => {
-      if (isScanningRef.current) return;
+    (direction: "up" | "down") => {
+      if (isScanningRef.current || !SdrEventEmitter) return;
       isScanningRef.current = true;
       setIsScanning(true);
-      try {
-        const nextHz = await scan(
-          frequencyRef.current,
-          direction,
-          bandRef.current,
-        );
-        if (isScanningRef.current) {
-          const wrapped = wrapFrequency(nextHz, bandRef.current);
-          await tune(wrapped);
-          if (bandRef.current === "fm" && isPlaying) {
-            await SdrModule.tuneFrequency(wrapped);
-          }
-        }
-      } finally {
+
+      teardownScanListeners();
+
+      const onProgress = SdrEventEmitter.addListener(
+        "onScanProgress",
+        ({ frequencyHz: hz }: { frequencyHz: number }) => {
+          setFrequencyHz(hz);
+        },
+      );
+
+      const onComplete = SdrEventEmitter.addListener(
+        "onScanComplete",
+        ({ frequencyHz: hz }: { frequencyHz: number }) => {
+          teardownScanListeners();
+          isScanningRef.current = false;
+          setIsScanning(false);
+          tune(hz);
+        },
+      );
+
+      const onFailed = SdrEventEmitter.addListener("onScanFailed", () => {
+        teardownScanListeners();
         isScanningRef.current = false;
         setIsScanning(false);
-      }
+        showToast("No station found", "Try adjusting the antenna");
+      });
+
+      scanSubscriptionsRef.current = [onProgress, onComplete, onFailed];
+
+      scan(frequencyRef.current, direction, bandRef.current).catch(() => {
+        teardownScanListeners();
+        isScanningRef.current = false;
+        setIsScanning(false);
+      });
     },
-    [isPlaying, tune],
+    [tune, teardownScanListeners],
   );
 
   const cancelScan = useCallback(() => {
+    if (!isScanningRef.current) return;
+    SdrModule.cancelScan().catch(() => {});
+    teardownScanListeners();
     isScanningRef.current = false;
     setIsScanning(false);
     if (scanLongPressTimer.current) {
       clearTimeout(scanLongPressTimer.current);
       scanLongPressTimer.current = null;
     }
-  }, []);
+  }, [teardownScanListeners]);
 
   // ── Bookmark / save preset ─────────────────────────────────────────────────
   const handleBookmark = useCallback(() => {
@@ -403,12 +453,6 @@ export default function RadioScreen() {
       showToast(`Recording started`, name);
     }
   }, [isRecording, frequencyHz, band, rdsInfo]);
-
-  // ── Mute ──────────────────────────────────────────────────────────────────
-  const handleMuteToggle = useCallback(() => {
-    setIsMuted((prev) => !prev);
-    // REAL: SdrModule.setMute(!isMuted)
-  }, []);
 
   // ── EQ/gain changes ────────────────────────────────────────────────────────
   const handleEqChange = useCallback((bands: number[]) => {
@@ -443,6 +487,7 @@ export default function RadioScreen() {
   useEffect(() => {
     return () => {
       stopWaveformPolling();
+      teardownScanListeners();
       if (rdsTimer.current) clearInterval(rdsTimer.current);
       if (signalTimer.current) clearInterval(signalTimer.current);
       if (isPlaying) SdrModule.stopFm();
@@ -494,20 +539,6 @@ export default function RadioScreen() {
           <Text style={[s.appTitle, { color: theme.primary }]}>SDRGo</Text>
 
           <View style={s.topRight}>
-            <TouchableOpacity
-              style={s.iconBtn}
-              onPress={handleMuteToggle}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            >
-              <Text
-                style={[
-                  s.iconBtnText,
-                  { color: isMuted ? theme.danger : theme.textSecondary },
-                ]}
-              >
-                {isMuted ? "🔇" : "🔊"}
-              </Text>
-            </TouchableOpacity>
             <TouchableOpacity
               style={s.iconBtn}
               onPress={handleBookmark}
@@ -749,7 +780,7 @@ export default function RadioScreen() {
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
-function styles(theme: any, insets: any) {
+function styles(theme: any) {
   const DIAL_HEIGHT = 220;
   const TRANSPORT_HEIGHT = 72;
 

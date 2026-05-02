@@ -15,13 +15,11 @@ import {
   View, Text, StyleSheet, TouchableOpacity,
   PanResponder, Animated, Dimensions, Platform,
 } from 'react-native';
-import { Canvas, Path, Circle, Group } from '@shopify/react-native-skia';
+import { Canvas, Path } from '@shopify/react-native-skia';
 import type { Theme } from '@sdrgo/ui-core';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
-const DIAL_H = 220;
-const DIAL_RADIUS = 320; // virtual radius for the curved feel
 const TICK_COUNT = 80;
 const TICK_SPACING = SCREEN_W / 10; // pixels between major ticks at rest
 
@@ -162,7 +160,6 @@ export default function RotaryDial({
 
     for (let i = -TICK_COUNT; i <= TICK_COUNT; i++) {
       const isMajor = i % 5 === 0;
-      const isMid = i % 5 === 0 && i % 10 !== 0;
       const x = W / 2 + i * (TICK_SPACING / 5);
       if (x < -10 || x > W + 10) continue;
 
@@ -269,7 +266,7 @@ export default function RotaryDial({
           onPress={onPlayToggle}
           activeOpacity={0.85}
         >
-          <Text style={[styles.playBtnIcon, { color: theme.textInverse }]}>
+          <Text style={[styles.playBtnIcon, { color: theme.textInverse, marginLeft: isPlaying ? 0 : 2 }]}>
             {isPlaying ? '■' : '▶'}
           </Text>
         </TouchableOpacity>
