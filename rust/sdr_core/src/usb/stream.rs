@@ -19,6 +19,8 @@ pub struct IqStream {
     read_pos: usize,
     overflows: u64,
     read_size: usize,
+    /// Samples remaining to discard after a hardware retune.
+    settling_samples: usize,
 }
 
 impl IqStream {
@@ -52,6 +54,7 @@ impl IqStream {
             read_pos: 0,
             overflows: 0,
             read_size,
+            settling_samples: 0,
         }
     }
 
@@ -82,7 +85,21 @@ impl IqStream {
             self.ring[self.write_pos] = sample;
             self.write_pos = next;
         }
+        // Discard post-retune settling samples as they arrive.
+        if self.settling_samples > 0 {
+            let to_skip = self.settling_samples.min(self.available());
+            self.read_pos = (self.read_pos + to_skip) % RING_BUFFER_SIZE;
+            self.settling_samples -= to_skip;
+        }
+
         Ok(samples_written)
+    }
+
+    /// Signal that the hardware has just been retuned.
+    /// The next ~100 ms of samples (204,800 @ 2.048 MSPS) are discarded while
+    /// the R820T2 PLL and AGC re-settle.
+    pub fn mark_retuned(&mut self) {
+        self.settling_samples = 204_800;
     }
 
     pub fn drain(&mut self, count: usize) -> IqBuffer {

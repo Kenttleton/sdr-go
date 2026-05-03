@@ -19,11 +19,20 @@ pub enum HardwareError {
 
 pub trait SdrHardware: Send {
     fn set_center_freq(&mut self, freq_hz: u32) -> Result<(), HardwareError>;
+    fn get_center_freq(&self) -> u32;
+
     fn set_sample_rate(&mut self, rate: u32) -> Result<(), HardwareError>;
-    fn set_gain(&mut self, tenths_db: i32, auto_gain: bool) -> Result<(), HardwareError>;
-    /// Read up to `num_samples` IQ samples, normalized to [-1.0, 1.0].
+    fn get_sample_rate(&self) -> u32;
+
+    fn set_tuner_gain(&mut self, tenths_db: Option<i32>) -> Result<(), HardwareError>;
+    fn get_tuner_gain(&self) -> Result<i32, HardwareError>;
+    fn available_tuner_gains(&self) -> Result<Vec<i32>, HardwareError>;
+
+    fn set_tuner_bandwidth(&mut self, bw: u32) -> Result<(), HardwareError>;
+    fn get_tuner_id(&self) -> &str;
+    fn set_bias_tee(&self, on: bool) -> Result<(), HardwareError>;
+
     fn read_samples(&mut self, num_samples: usize) -> Result<Vec<Complex<f32>>, HardwareError>;
-    fn available_gains(&self) -> Vec<i32>;
 }
 
 // Fallback Gains Table (RTL2832U)
@@ -33,6 +42,8 @@ pub const R820T2_GAINS_TENTHS: &[i32] = &[
 ];
 
 pub struct RtlSdrHardware {
+    id: String,
+    bias_tee_on: bool,
     sdr: RtlSdr,
     gains: Vec<i32>,
 }
@@ -58,14 +69,18 @@ fn init_libusb_android() {
 impl RtlSdrHardware {
     pub fn open(fd: i32) -> Result<Self, HardwareError> {
         init_libusb_android();
-        let sdr =
-            RtlSdr::open(DeviceId::Fd(fd)).map_err(|e| HardwareError::OpenError(e.to_string()))?;
+        let sdr = RtlSdr::open_with_fd(fd).map_err(|e| HardwareError::OpenError(e.to_string()))?;
         let gains = sdr
             .get_tuner_gains()
             .unwrap_or_else(|_| R820T2_GAINS_TENTHS.to_vec());
-        let tuner_id = sdr.get_tuner_id().unwrap_or("unknown");
+        let tuner_id = sdr.get_tuner_id().unwrap_or("unknown").to_string();
         log::info!("RtlSdrHardware: tuner={} gains={:?}", tuner_id, gains);
-        let hw = Self { sdr, gains };
+        let hw = Self {
+            id: tuner_id,
+            sdr,
+            gains,
+            bias_tee_on: false,
+        };
         hw.sdr
             .reset_buffer()
             .map_err(|e| HardwareError::OpenError(format!("reset_buffer: {}", e)))?;
@@ -82,21 +97,54 @@ impl SdrHardware for RtlSdrHardware {
             .map_err(|e| HardwareError::FrequencyError(e.to_string()))
     }
 
+    fn get_center_freq(&self) -> u32 {
+        self.sdr.get_center_freq()
+    }
+
     fn set_sample_rate(&mut self, rate: u32) -> Result<(), HardwareError> {
         self.sdr
             .set_sample_rate(rate)
             .map_err(|e| HardwareError::SampleRateError(e.to_string()))
     }
 
-    fn set_gain(&mut self, tenths_db: i32, auto_gain: bool) -> Result<(), HardwareError> {
-        let mode = if auto_gain {
-            TunerGain::Auto
+    fn get_sample_rate(&self) -> u32 {
+        self.sdr.get_sample_rate()
+    }
+
+    fn set_tuner_gain(&mut self, tenths_db: Option<i32>) -> Result<(), HardwareError> {
+        let mode = if let Some(x) = tenths_db {
+            TunerGain::Manual(x)
         } else {
-            TunerGain::Manual(tenths_db)
+            TunerGain::Auto
         };
         self.sdr
             .set_tuner_gain(mode)
             .map_err(|e| HardwareError::GainError(e.to_string()))
+    }
+
+    fn get_tuner_gain(&self) -> Result<i32, HardwareError> {
+        // rtl-sdr-rs does not expose a get-current-gain method; return unavailable.
+        Err(HardwareError::GainError("get_tuner_gain not supported".to_string()))
+    }
+
+    fn available_tuner_gains(&self) -> Result<Vec<i32>, HardwareError> {
+        Ok(self.gains.clone())
+    }
+
+    fn set_tuner_bandwidth(&mut self, bw: u32) -> Result<(), HardwareError> {
+        self.sdr
+            .set_tuner_bandwidth(bw)
+            .map_err(|e| HardwareError::GainError(e.to_string()))
+    }
+
+    fn get_tuner_id(&self) -> &str {
+        &self.id
+    }
+
+    fn set_bias_tee(&self, on: bool) -> Result<(), HardwareError> {
+        self.sdr
+            .set_bias_tee(on)
+            .map_err(|e| HardwareError::OpenError(e.to_string()))
     }
 
     fn read_samples(&mut self, num_samples: usize) -> Result<Vec<Complex<f32>>, HardwareError> {
@@ -110,9 +158,5 @@ impl SdrHardware for RtlSdrHardware {
             .map(|c| Complex::new((c[0] as f32 - 127.5) / 127.5, (c[1] as f32 - 127.5) / 127.5))
             .collect();
         Ok(samples)
-    }
-
-    fn available_gains(&self) -> Vec<i32> {
-        self.gains.clone()
     }
 }

@@ -107,7 +107,7 @@ pub struct SdrDevice {
 }
 
 impl SdrDevice {
-    pub fn open(fd: i32, config: DeviceConfig) -> Result<Self, DeviceError> {
+    pub fn open_from_fd(fd: i32, config: DeviceConfig) -> Result<Self, DeviceError> {
         log::info!("SdrDevice: opening fd={}", fd);
         let bulk_transfer_samples = probe_bulk_transfer_samples(fd);
         let mut hw = RtlSdrHardware::open(fd)?;
@@ -118,12 +118,8 @@ impl SdrDevice {
         hw.set_sample_rate(config.sample_rate)?;
         log::info!("SdrDevice: sample rate {} sps", config.sample_rate);
 
-        let (tenths, auto) = match config.gain_tenths {
-            Some(g) => (g, false),
-            None => (0, true),
-        };
-        hw.set_gain(tenths, auto)?;
-        log::info!("SdrDevice: gain tenths={} auto={}", tenths, auto);
+        hw.set_tuner_gain(config.gain_tenths)?;
+        log::info!("SdrDevice: gain {:?}", config.gain_tenths);
 
         Ok(Self {
             inner: Arc::new(Mutex::new(Some(Box::new(hw)))),
@@ -163,7 +159,7 @@ impl SdrDevice {
     pub fn set_gain(&mut self, tenths_db: i32, auto_gain: bool) -> Result<(), DeviceError> {
         let mut guard = self.inner.lock();
         let hw = guard.as_mut().ok_or(DeviceError::NotOpen)?;
-        hw.set_gain(tenths_db, auto_gain)?;
+        hw.set_tuner_gain(if auto_gain { None } else { Some(tenths_db) })?;
         self.config.gain_tenths = if auto_gain { None } else { Some(tenths_db) };
         Ok(())
     }
@@ -171,7 +167,7 @@ impl SdrDevice {
     pub fn available_gains(&self) -> Vec<i32> {
         let guard = self.inner.lock();
         match guard.as_ref() {
-            Some(hw) => hw.available_gains(),
+            Some(hw) => hw.available_tuner_gains().unwrap_or_default(),
             None => vec![],
         }
     }
