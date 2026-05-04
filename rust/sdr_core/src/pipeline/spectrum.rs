@@ -52,17 +52,19 @@ impl FftStage {
 
 // ── Waveform ──────────────────────────────────────────────────────────────────
 
-/// Captures 512-sample display snapshots for two signal paths:
-///   - IQ envelope: magnitude of raw RF samples, pre-gate, pre-demod
-///   - Audio:       post-demod PCM samples
+/// Captures 512-sample display snapshots and an RMS signal-strength reading from
+/// two signal paths:
+///   - IQ envelope:      magnitude of raw RF samples, pre-demod
+///   - Audio:            post-demod PCM samples
+///   - Signal strength:  RMS of the raw IQ block (parallel read, not inline)
 ///
-/// Both are updated opportunistically from data already in flight.
-/// The frontend chooses which (if any) to display.
+/// All three are updated opportunistically from data already in flight.
 pub struct WaveformStage {
     iq_waveform: [f32; 512],
     iq_ready: bool,
     audio_waveform: [f32; 512],
     audio_ready: bool,
+    signal_strength: f32,
 }
 
 impl WaveformStage {
@@ -72,6 +74,7 @@ impl WaveformStage {
             iq_ready: false,
             audio_waveform: [0.0; 512],
             audio_ready: false,
+            signal_strength: 0.0,
         }
     }
 
@@ -88,6 +91,21 @@ impl WaveformStage {
             *slot = (s.re * s.re + s.im * s.im).sqrt();
         }
         self.iq_ready = true;
+    }
+
+    /// Compute RMS signal strength from the raw IQ block.
+    /// Called with the same block passed to update_iq, before it enters the demod.
+    pub fn update_rms(&mut self, iq: &[Cf32]) {
+        if iq.is_empty() {
+            return;
+        }
+        let sum: f32 = iq.iter().map(|s| s.re * s.re + s.im * s.im).sum();
+        self.signal_strength = (sum / iq.len() as f32).sqrt().clamp(0.0, 1.0);
+    }
+
+    /// Returns the most recent RMS signal strength in [0.0, 1.0].
+    pub fn signal_strength(&self) -> f32 {
+        self.signal_strength
     }
 
     /// Update the audio waveform snapshot from demod PCM output.

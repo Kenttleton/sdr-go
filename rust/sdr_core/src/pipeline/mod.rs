@@ -6,7 +6,7 @@ mod manager;
 pub mod spectrum;
 
 use am::AmPipeline;
-use fm::FmPipeline;
+use fm::{FmMode, FmPipeline};
 use num_complex::Complex;
 
 pub use am::{AmBandwidth, AmMode};
@@ -24,12 +24,35 @@ pub enum DemodPipeline {
 }
 
 impl DemodPipeline {
-    pub fn fm(input_rate: u32, output_rate: u32, stereo: bool) -> Self {
-        Self::Fm(FmPipeline::new(input_rate, output_rate, stereo))
+    /// Wide FM — broadcast band, stereo pilot tracking, 75 µs de-emphasis.
+    pub fn wfm(input_rate: u32, output_rate: u32, stereo: bool) -> Self {
+        Self::Fm(FmPipeline::new(input_rate, output_rate, stereo, FmMode::Wide, None, 0.0))
     }
 
-    pub fn am(input_rate: u32, output_rate: u32) -> Self {
-        Self::Am(AmPipeline::new(input_rate, output_rate))
+    /// Narrow FM — voice/utility bands, mono, no de-emphasis.
+    /// `bandwidth_hz`: channel half-bandwidth override (default 12.5 kHz).
+    pub fn nfm(input_rate: u32, output_rate: u32, bandwidth_hz: Option<f32>) -> Self {
+        Self::Fm(FmPipeline::new(input_rate, output_rate, false, FmMode::Narrow, bandwidth_hz, 0.0))
+    }
+
+    /// AM double sideband / envelope detect.
+    /// `bandwidth_hz`: channel half-bandwidth (default 5 000 Hz).
+    pub fn am_dsb(input_rate: u32, output_rate: u32, bandwidth_hz: Option<f32>) -> Self {
+        Self::Am(AmPipeline::new(input_rate, output_rate, bandwidth_hz, 0.0))
+    }
+
+    /// AM upper sideband. `center_hz` is the BFO offset above the carrier (stub).
+    pub fn am_usb(input_rate: u32, output_rate: u32, bandwidth_hz: Option<f32>, center_hz: f32) -> Self {
+        let mut p = AmPipeline::new(input_rate, output_rate, bandwidth_hz, center_hz);
+        p.set_mode(AmMode::Usb);
+        Self::Am(p)
+    }
+
+    /// AM lower sideband. `center_hz` is the BFO offset below the carrier (stub).
+    pub fn am_lsb(input_rate: u32, output_rate: u32, bandwidth_hz: Option<f32>, center_hz: f32) -> Self {
+        let mut p = AmPipeline::new(input_rate, output_rate, bandwidth_hz, center_hz);
+        p.set_mode(AmMode::Lsb);
+        Self::Am(p)
     }
 
     pub fn process_iq(&mut self, iq: &[Cf32]) -> Vec<f32> {
@@ -59,10 +82,18 @@ impl DemodPipeline {
         }
     }
 
-    /// Replace the AM IF filter for the new bandwidth setting.
+    /// Replace the AM IF filter using a preset step.
     pub fn set_am_bandwidth(&mut self, bw: AmBandwidth) {
         if let Self::Am(p) = self {
             p.set_bandwidth(bw);
+        }
+    }
+
+    /// Replace the AM IF filter with a continuous Hz cutoff.
+    /// More precise than the preset steps — use this for SSB passband dialing.
+    pub fn set_am_bandwidth_hz(&mut self, hz: f32) {
+        if let Self::Am(p) = self {
+            p.set_bandwidth_hz(hz);
         }
     }
 

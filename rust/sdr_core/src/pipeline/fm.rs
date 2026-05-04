@@ -3,14 +3,30 @@ use num_complex::Complex;
 
 type Cf32 = Complex<f32>;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FmMode {
+    /// Wide FM — broadcast band, up to 200 kHz deviation, stereo pilot, RDS-capable.
+    Wide,
+    /// Narrow FM — voice/utility bands, ±5 kHz deviation, mono, no de-emphasis.
+    Narrow,
+}
+
 pub struct FmPipeline {
+    mode: FmMode,
+    // Center of the demodulated audio channel in Hz (0 = DC, standard FM).
+    // Non-zero shifts the audio band for sub-channel extraction (future use).
+    #[allow(dead_code)]
+    center_hz: f32,
+
     // Stage 1: discriminator state
     prev_sample: Cf32,
 
-    // Stage 2: pre-filter + decimate (input_rate → ~200 kHz)
+    // Stage 2: pre-filter + decimate
+    //   WFM: input_rate → ~200 kHz (preserves 19 kHz pilot + 38 kHz stereo subcarrier)
+    //   NFM: input_rate → ~4× half_bw (scales with channel bandwidth)
     pre_filter: DecimatingFirFilter,
 
-    // Stage 3: pilot tracking (19 kHz NCO)
+    // Stage 3: pilot tracking (19 kHz NCO) — WFM only
     pilot_phase: f32,
     pilot_phase_inc: f32,
     pilot_amplitude: f32,
@@ -21,6 +37,7 @@ pub struct FmPipeline {
     diff_lpf: FirFilter,
 
     // Stage 6: de-emphasis IIR state (runs at output_rate)
+    // NFM: alpha = 1.0 → IIR collapses to passthrough (no de-emphasis)
     deemph_l: f32,
     deemph_r: f32,
     deemph_alpha: f32,
@@ -35,28 +52,67 @@ pub struct FmPipeline {
 }
 
 impl FmPipeline {
-    pub fn new(input_rate: u32, output_rate: u32, stereo: bool) -> Self {
-        let pre_decimation = ((input_rate / 200_000) as usize).max(1);
+    /// Create a new FM pipeline.
+    ///
+    /// - `bandwidth_hz`: channel half-bandwidth in Hz; `None` uses the mode default
+    ///   (WFM = 100 kHz, NFM = 12.5 kHz). Drives the pre-filter cutoff and intermediate rate.
+    /// - `center_hz`: center of the demodulated audio channel relative to DC. `0.0` is
+    ///   correct for all standard FM use. Non-zero reserved for future sub-band extraction.
+    pub fn new(
+        input_rate: u32,
+        output_rate: u32,
+        stereo: bool,
+        mode: FmMode,
+        bandwidth_hz: Option<f32>,
+        center_hz: f32,
+    ) -> Self {
+        let half_bw = bandwidth_hz.unwrap_or(match mode {
+            FmMode::Wide   => 100_000.0,
+            FmMode::Narrow =>  12_500.0,
+        });
+
+        let audio_bw = match mode {
+            FmMode::Wide   => 15_000.0f32,
+            FmMode::Narrow =>  3_500.0f32,
+        };
+
+        // WFM needs a fixed ~200 kHz intermediate to preserve the 19 kHz pilot and
+        // 38 kHz stereo subcarrier. NFM scales to 4× the channel half-bandwidth.
+        let pre_target = match mode {
+            FmMode::Wide   => 200_000u32,
+            FmMode::Narrow => ((half_bw * 4.0) as u32).max(50_000),
+        };
+        let pre_decimation = ((input_rate / pre_target) as usize).max(1);
         let intermediate_rate = input_rate / pre_decimation as u32;
 
-        let pre_cutoff = 100_000.0 / input_rate as f32;
-        let pre_taps = firdes::lowpass(pre_cutoff, firdes::Kaiser::new(50.0));
-        let pre_filter = DecimatingFirFilter::new(pre_decimation, pre_taps);
+        let pre_filter = DecimatingFirFilter::new(
+            pre_decimation,
+            firdes::lowpass(half_bw / input_rate as f32, firdes::Kaiser::new(50.0)),
+        );
 
-        let audio_cutoff = 15_000.0 / intermediate_rate as f32;
-        let audio_taps = firdes::lowpass(audio_cutoff, firdes::Kaiser::new(40.0));
-        let audio_lpf = FirFilter::new(audio_taps);
+        let audio_lpf = FirFilter::new(
+            firdes::lowpass(audio_bw / intermediate_rate as f32, firdes::Kaiser::new(40.0)),
+        );
 
-        let diff_cutoff = 15_000.0 / intermediate_rate as f32;
-        let diff_taps = firdes::lowpass(diff_cutoff, firdes::Kaiser::new(40.0));
-        let diff_lpf = FirFilter::new(diff_taps);
+        // diff LPF is only exercised in the WFM stereo path.
+        let diff_lpf = FirFilter::new(
+            firdes::lowpass(15_000.0 / intermediate_rate as f32, firdes::Kaiser::new(40.0)),
+        );
 
         let diff_decimation = ((intermediate_rate / output_rate) as usize).max(1);
 
-        let deemph_alpha = 1.0 - (-1.0_f32 / (75e-6 * output_rate as f32)).exp();
-        let pilot_phase_inc = 2.0 * std::f32::consts::PI * 19_000.0 / intermediate_rate as f32;
+        // NFM: alpha = 1.0 → de-emphasis IIR is a passthrough (no pre-emphasis in voice FM).
+        let deemph_alpha = match mode {
+            FmMode::Wide   => 1.0 - (-1.0_f32 / (75e-6 * output_rate as f32)).exp(),
+            FmMode::Narrow => 1.0,
+        };
+
+        let pilot_phase_inc =
+            2.0 * std::f32::consts::PI * 19_000.0 / intermediate_rate as f32;
 
         Self {
+            mode,
+            center_hz,
             prev_sample: Cf32::new(1.0, 0.0),
             pre_filter,
             pilot_phase: 0.0,
@@ -92,16 +148,20 @@ impl FmPipeline {
             return Vec::new();
         }
 
-        // Stage 3: pilot tracking — produce per-sample subcarrier reference
+        // Stage 3: pilot tracking — WFM only. NFM is always mono so we skip the NCO
+        // entirely and leave stereo_detected = false, producing an empty subcarrier_refs
+        // that the diff path below never touches (gated on stereo_detected && stereo).
         let mut subcarrier_refs = Vec::with_capacity(disc_dec.len());
-        for &d in &disc_dec {
-            let pilot_ref = self.pilot_phase.cos();
-            let correlation = d * pilot_ref;
-            self.pilot_amplitude = self.pilot_amplitude * 0.9999 + correlation.abs() * 0.0001;
-            self.stereo_detected = self.pilot_amplitude > 0.05;
-            self.pilot_phase =
-                (self.pilot_phase + self.pilot_phase_inc).rem_euclid(std::f32::consts::TAU);
-            subcarrier_refs.push((self.pilot_phase * 2.0).cos());
+        if self.mode == FmMode::Wide {
+            for &d in &disc_dec {
+                let pilot_ref = self.pilot_phase.cos();
+                let correlation = d * pilot_ref;
+                self.pilot_amplitude = self.pilot_amplitude * 0.9999 + correlation.abs() * 0.0001;
+                self.stereo_detected = self.pilot_amplitude > 0.05;
+                self.pilot_phase =
+                    (self.pilot_phase + self.pilot_phase_inc).rem_euclid(std::f32::consts::TAU);
+                subcarrier_refs.push((self.pilot_phase * 2.0).cos());
+            }
         }
 
         // Stage 4: sum LPF (L+R mono signal) at intermediate rate

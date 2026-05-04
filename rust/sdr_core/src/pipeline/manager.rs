@@ -6,8 +6,16 @@ type Cf32 = Complex<f32>;
 
 /// Top-level pipeline mode exposed to JNI callers.
 pub enum PipelineMode {
-    Fm,
-    Am,
+    /// Wide FM — broadcast band, stereo pilot, 75 µs de-emphasis.
+    Wfm,
+    /// Narrow FM — voice/utility bands, mono, no de-emphasis.
+    Nfm,
+    /// AM double sideband / envelope detect.
+    AmDsb,
+    /// AM upper sideband (product detector — stubbed).
+    AmUsb,
+    /// AM lower sideband (product detector — stubbed).
+    AmLsb,
 }
 
 enum PipelineState {
@@ -36,7 +44,7 @@ pub struct PipelineManager {
 impl PipelineManager {
     pub fn new(input_rate: u32, output_rate: u32, stereo: bool, center_hz: u32) -> Self {
         Self {
-            demod: DemodPipeline::fm(input_rate, output_rate, stereo),
+            demod: DemodPipeline::wfm(input_rate, output_rate, stereo),
             state: PipelineState::Stable,
             input_rate,
             output_rate,
@@ -113,6 +121,10 @@ impl PipelineManager {
         self.demod.set_am_bandwidth(bw);
     }
 
+    pub fn set_am_bandwidth_hz(&mut self, hz: f32) {
+        self.demod.set_am_bandwidth_hz(hz);
+    }
+
     // ── Processing ───────────────────────────────────────────────────────────
 
     /// Process a block of IQ samples.
@@ -178,8 +190,11 @@ impl PipelineManager {
 
     fn build_demod(&self, mode: PipelineMode) -> DemodPipeline {
         match mode {
-            PipelineMode::Fm => DemodPipeline::fm(self.input_rate, self.output_rate, self.stereo),
-            PipelineMode::Am => DemodPipeline::am(self.input_rate, self.output_rate),
+            PipelineMode::Wfm  => DemodPipeline::wfm(self.input_rate, self.output_rate, self.stereo),
+            PipelineMode::Nfm  => DemodPipeline::nfm(self.input_rate, self.output_rate, None),
+            PipelineMode::AmDsb => DemodPipeline::am_dsb(self.input_rate, self.output_rate, None),
+            PipelineMode::AmUsb => DemodPipeline::am_usb(self.input_rate, self.output_rate, None, 0.0),
+            PipelineMode::AmLsb => DemodPipeline::am_lsb(self.input_rate, self.output_rate, None, 0.0),
         }
     }
 }

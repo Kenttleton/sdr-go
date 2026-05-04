@@ -10,7 +10,7 @@ use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 
 use jni::objects::JClass;
-use jni::sys::{jboolean, jfloatArray, jint, jlong};
+use jni::sys::{jboolean, jfloat, jfloatArray, jint, jlong};
 use jni::JNIEnv;
 
 use num_complex::Complex;
@@ -212,6 +212,7 @@ pub unsafe extern "C" fn Java_com_sdrgo_SdrModule_getAudioBuffer(
     let iq = p.stream.drain(available);
 
     p.waveform.update_iq(&iq);
+    p.waveform.update_rms(&iq);
 
     let pcm = p.manager.process_iq(iq);
 
@@ -318,8 +319,11 @@ pub unsafe extern "C" fn Java_com_sdrgo_SdrModule_setMode(
     mode: jint,
 ) -> jboolean {
     let mode = match mode {
-        0 => PipelineMode::Fm,
-        1 => PipelineMode::Am,
+        0 => PipelineMode::Wfm,
+        1 => PipelineMode::Nfm,
+        2 => PipelineMode::AmDsb,
+        3 => PipelineMode::AmUsb,
+        4 => PipelineMode::AmLsb,
         _ => {
             let _ = env.throw_new(
                 "java/lang/RuntimeException",
@@ -339,6 +343,41 @@ pub unsafe extern "C" fn Java_com_sdrgo_SdrModule_setMode(
             0
         }
     }
+}
+
+/// Set the AM audio IF filter bandwidth in Hz. No-op when not in an AM mode.
+/// Use this to dial in SSB passband width (e.g. 2800.0 for voice SSB).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Java_com_sdrgo_SdrModule_setAmBandwidth(
+    mut env: JNIEnv,
+    _class: JClass,
+    bandwidth_hz: jfloat,
+) -> jboolean {
+    let mut lock = PIPELINE.lock();
+    match lock.as_mut() {
+        Some(p) => {
+            p.manager.set_am_bandwidth_hz(bandwidth_hz);
+            1
+        }
+        None => {
+            let _ = env.throw_new("java/lang/RuntimeException", "Device not open");
+            0
+        }
+    }
+}
+
+/// Returns RMS signal strength in [0.0, 1.0] from the most recent IQ block.
+/// Updated every getAudioBuffer() call. Returns 0.0 when no device is open.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Java_com_sdrgo_SdrModule_getSignalStrength(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jfloat {
+    PIPELINE
+        .lock()
+        .as_ref()
+        .map(|p| p.waveform.signal_strength())
+        .unwrap_or(0.0)
 }
 
 #[unsafe(no_mangle)]

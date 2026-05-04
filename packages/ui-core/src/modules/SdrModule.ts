@@ -32,21 +32,21 @@ export default {
     guardAndroid(() => getNative().requestUsbPermission()),
 
   /**
-   * Open the RTL-SDR and start audio playback.
+   * Open the RTL-SDR and start audio playback. Always opens in WFM mode.
+   * Use setMode() after opening to switch to NFM or AM.
    *
    * @param fd            USB file descriptor from requestUsbPermission()
    * @param frequencyHz   Initial centre frequency in Hz
-   * @param stereo        Request stereo decode (falls back to mono when pilot absent)
-   * @param stationsMode  true → FM Stations: 2.4 MSPS, 240 kHz intermediate, 48 kHz audio, RDS
-   *                      false → FM Wide:     2.048 MSPS, 96 kHz audio, max audio quality
+   * @param stereo        Enable stereo decode for WFM (pilot detection still required)
+   * @param highQuality   true → 96 kHz audio output; false → 48 kHz (lower CPU, future RDS)
    */
   startFm: (
     fd: number,
     frequencyHz: number,
     stereo: boolean = true,
-    stationsMode: boolean = false,
+    highQuality: boolean = true,
   ): Promise<boolean> =>
-    guardAndroid(() => getNative().startFm(fd, frequencyHz, stereo, stationsMode)),
+    guardAndroid(() => getNative().startFm(fd, frequencyHz, stereo, highQuality)),
 
   tuneFrequency: (frequencyHz: number): Promise<boolean> =>
     guardAndroid(() => getNative().tuneFrequency(frequencyHz)),
@@ -60,13 +60,40 @@ export default {
   getWaveformBuffer: (): Promise<number[] | null> =>
     guardAndroid(() => getNative().getWaveformBuffer()),
 
+  // ── Mode ────────────────────────────────────────────────────────────────────
+  // 0 = WFM, 1 = NFM, 2 = AM-DSB, 3 = AM-USB, 4 = AM-LSB
+  // Transitions between modes are crossfaded inside sdr_core.
+
+  setMode: (mode: number): Promise<boolean> =>
+    guardAndroid(() => getNative().setMode(mode)),
+
+  // ── AM bandwidth ────────────────────────────────────────────────────────────
+  // Sets the AM audio IF filter cutoff in Hz. No-op when not in an AM mode.
+  // Typical values: 8000 (wide/music), 5000 (standard), 3000 (narrow), 2500 (SSB voice).
+
+  setAmBandwidth: (bandwidthHz: number): Promise<boolean> =>
+    guardAndroid(() => getNative().setAmBandwidth(bandwidthHz)),
+
   // ── Signal ──────────────────────────────────────────────────────────────────
 
   getSignalStrength: (): Promise<number> =>
     guardAndroid(() => getNative().getSignalStrength()),
 
+  // ── Display outputs ─────────────────────────────────────────────────────────
+  // All three are updated opportunistically inside getAudioBuffer() on the Kotlin
+  // audio loop — poll at display rate, not audio rate.
+
+  getIqWaveform: (): Promise<number[]> =>
+    guardAndroid(() => getNative().getIqWaveform()),
+
+  getAudioWaveform: (): Promise<number[]> =>
+    guardAndroid(() => getNative().getAudioWaveform()),
+
+  getSpectrum: (): Promise<number[]> =>
+    guardAndroid(() => getNative().getSpectrum()),
+
   // ── RDS ─────────────────────────────────────────────────────────────────────
-  // Only populated in stationsMode. Returns JSON string parsed by RdsModule.
+  // Only populated in WFM when an RDS subcarrier is present.
 
   getRdsInfo: (): Promise<string> =>
     guardAndroid(() => getNative().getRdsInfo()),
@@ -80,11 +107,14 @@ export default {
     guardAndroid(() => getNative().setGain(tenthsDb, autoGain)),
 
   // ── EQ ──────────────────────────────────────────────────────────────────────
+  // Placeholder — parametric EQ not yet implemented in sdr_core. Always returns false.
 
   setEq: (bands: number[]): Promise<boolean> =>
     guardAndroid(() => getNative().setEq(bands)),
 
   // ── Mono mode ───────────────────────────────────────────────────────────────
+  // Placeholder — stereo is auto-detected from the WFM pilot tone; there is no
+  // manual mono override in the current pipeline. Always returns false.
 
   setMonoMode: (mono: boolean): Promise<boolean> =>
     guardAndroid(() => getNative().setMonoMode(mono)),

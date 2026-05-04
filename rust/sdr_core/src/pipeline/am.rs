@@ -34,6 +34,13 @@ impl AmBandwidth {
 pub struct AmPipeline {
     mode: AmMode,
 
+    // Center of the demodulated audio channel in Hz.
+    // DSB/envelope: 0 (carrier is at DC after demod).
+    // USB: positive offset — BFO placed above the carrier (future product detector).
+    // LSB: negative offset — BFO placed below the carrier (future product detector).
+    #[allow(dead_code)]
+    center_hz: f32,
+
     // Stage 1: IQ anti-alias + decimate (input_rate → ~51.2 kHz)
     pre_filter: ComplexDecimatingFirFilter,
     pre_decimation: usize,
@@ -44,8 +51,9 @@ pub struct AmPipeline {
     dc_alpha: f32,
 
     // Stage 4: variable-bandwidth audio IF filter
+    // Stored as Hz so set_bandwidth_hz() can compare without going through the enum.
     audio_filter: FirFilter,
-    bandwidth: AmBandwidth,
+    bandwidth_hz: f32,
 
     // Stage 5: AGC
     agc_gain: f32,
@@ -55,29 +63,44 @@ pub struct AmPipeline {
 }
 
 impl AmPipeline {
-    pub fn new(input_rate: u32, output_rate: u32) -> Self {
+    /// Create a new AM pipeline.
+    ///
+    /// - `bandwidth_hz`: channel half-bandwidth in Hz; `None` defaults to 5 000 Hz
+    ///   (standard broadcast AM). Sets both the pre-filter anti-alias cutoff and the
+    ///   initial audio IF filter cutoff.
+    /// - `center_hz`: BFO offset from DC in Hz. `0.0` for DSB/envelope. For USB/LSB
+    ///   this will shift the product detector carrier once that demod path is implemented.
+    pub fn new(
+        input_rate: u32,
+        output_rate: u32,
+        bandwidth_hz: Option<f32>,
+        center_hz: f32,
+    ) -> Self {
+        let half_bw = bandwidth_hz.unwrap_or(5_000.0).max(2_000.0);
+
         let pre_decimation = ((input_rate / 50_000) as usize).max(1);
         let intermediate_rate = input_rate / pre_decimation as u32;
 
-        let pre_cutoff = 6_000.0 / input_rate as f32;
-        let pre_taps = firdes::lowpass(pre_cutoff, firdes::Kaiser::new(50.0));
-        let pre_filter = ComplexDecimatingFirFilter::new(pre_decimation, pre_taps);
+        let pre_filter = ComplexDecimatingFirFilter::new(
+            pre_decimation,
+            firdes::lowpass(half_bw / input_rate as f32, firdes::Kaiser::new(50.0)),
+        );
 
-        let default_bw = AmBandwidth::Normal;
-        let audio_filter = FirFilter::new(Self::make_audio_taps(default_bw, intermediate_rate));
+        let audio_filter = FirFilter::new(Self::make_audio_taps_hz(half_bw, intermediate_rate));
 
-        // ~30 Hz cutoff to remove carrier residual
+        // ~30 Hz cutoff to remove carrier residual after envelope detect.
         let dc_alpha = 2.0 * std::f32::consts::PI * 30.0 / intermediate_rate as f32;
 
         Self {
             mode: AmMode::Envelope,
+            center_hz,
             pre_filter,
             pre_decimation,
             intermediate_rate,
             dc_state: 0.0,
             dc_alpha,
             audio_filter,
-            bandwidth: default_bw,
+            bandwidth_hz: half_bw,
             agc_gain: 1.0,
             agc_frozen: false,
             output_rate,
@@ -92,11 +115,19 @@ impl AmPipeline {
         self.agc_frozen = frozen;
     }
 
+    /// Switch to a preset bandwidth step.
     pub fn set_bandwidth(&mut self, bw: AmBandwidth) {
-        if bw != self.bandwidth {
+        self.set_bandwidth_hz(bw.cutoff_hz());
+    }
+
+    /// Set the audio IF filter cutoff continuously in Hz.
+    /// Use this for SSB where you want to dial in an exact passband width.
+    pub fn set_bandwidth_hz(&mut self, hz: f32) {
+        let hz = hz.max(2_000.0);
+        if (hz - self.bandwidth_hz).abs() > 1.0 {
             self.audio_filter
-                .set_taps(Self::make_audio_taps(bw, self.intermediate_rate));
-            self.bandwidth = bw;
+                .set_taps(Self::make_audio_taps_hz(hz, self.intermediate_rate));
+            self.bandwidth_hz = hz;
         }
     }
 
@@ -145,8 +176,7 @@ impl AmPipeline {
         out
     }
 
-    fn make_audio_taps(bw: AmBandwidth, rate: u32) -> Vec<f32> {
-        let cutoff = bw.cutoff_hz() / rate as f32;
-        firdes::lowpass(cutoff, firdes::Kaiser::new(40.0))
+    fn make_audio_taps_hz(cutoff_hz: f32, rate: u32) -> Vec<f32> {
+        firdes::lowpass(cutoff_hz / rate as f32, firdes::Kaiser::new(40.0))
     }
 }

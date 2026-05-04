@@ -1,223 +1,161 @@
 # sdr_core
 
-A modular, high-performance SDR (Software Defined Radio) signal processing library for Android, written in Rust. Built as the foundation of [SDRGo](https://github.com/utterback/sdrgo) and designed to be reusable by any Android SDR application.
+Rust signal processing library for RTL-SDR receivers on Android. Handles USB device communication, IQ streaming, and real-time demodulation through a JNI boundary for Kotlin native modules.
 
-Solves the hard problem of RTL-SDR hardware communication and real-time signal processing on Android in a memory-safe, well-structured library that other developers can build on.
+Part of the [SDRGo](https://github.com/kenttleton/sdr-core) project.
 
 ---
 
 ## Status
 
-> 🚧 Active development — API is not yet stable. Version 1.0.0 will mark API stability.
-
-| Module | Status |
+| Feature | Status |
 |---|---|
-| USB / Hardware Abstraction | 🚧 In progress |
-| IQ Stream Pipeline | 🚧 In progress |
-| DSP Primitives | 🔜 Planned |
-| FM Demodulator | 🔜 Planned |
-| AM / NFM Demodulator | 🔜 Planned |
-| NOAA Weather Audio | 🔜 Planned |
-| NOAA APT Satellite Imagery | 🔜 Planned |
-| ADS-B Decoder | 🔜 Planned |
-| Scan Engine | 🔜 Planned |
-| Audio Output | 🔜 Planned |
-| RDS Decoder | 🔜 Planned |
+| RTL-SDR Blog V3 USB | ✅ Working |
+| FM Wide (WFM) — stereo detect | ✅ Working |
+| FM Narrow (NFM) | 🔜 Planned |
+| AM — envelope (DSB) | ✅ Working |
+| AM — SAM / SSB (USB, LSB) | 🚧 Stubbed |
+| Spectrum analyzer (FFT) | ✅ Working |
+| IQ / audio waveform display | ✅ Working |
+| Smooth frequency transitions (DDC) | ✅ Working |
+| Smooth mode transitions (crossfade) | ✅ Working |
+| Parametric EQ | 🔜 Planned |
+| RDS decoder (WFM) | 🔜 Planned |
+| Signal strength (RMS) | 🔜 Planned |
 
 ---
 
 ## Architecture
 
-`sdr_core` is the native signal processing layer in a three-tier Android SDR stack:
-
 ```
 React Native / Expo          UI layer
-        ↕
-Kotlin Native Module         Android APIs, AudioTrack, USB permissions, JNI bridge
-        ↕
-sdr_core (this library)      Signal processing, decoding, pipeline orchestration
-        ↕
-C libraries via FFI          librtlsdr, liquid-dsp, dump1090
-        ↕
+        ↕ TypeScript
+Kotlin SdrModule             AudioTrack, USB permissions, scan engine
+        ↕ JNI
+sdr_core (this library)      IQ streaming, demodulation, DSP, spectrum
+        ↕ libusb
 RTL-SDR Hardware             Raw IQ samples over USB OTG
 ```
 
-### Module Structure
+### Module structure
 
 ```
-sdr_core/
-  src/
-    usb/          Hardware abstraction — device enumeration, init, IQ streaming
-    dsp/          DSP primitives — filters, FFT, decimation, AGC
-    demod/        Demodulators — FM, AM, NFM, SSB (each pluggable)
-    decode/       Decoders — ADS-B, NOAA APT, RDS, SAME/EAS
-    pipeline/     Orchestration — threading model, ring buffer, scheduler
-    audio/        Audio output — PCM buffer management, sample rate conversion
-    jni/          JNI boundary — all extern "C" functions exposed to Kotlin
+src/
+  lib.rs          JNI entry point and pipeline orchestration
+  usb/
+    device.rs     SdrDevice — open, tune, gain, bulk transfer
+    stream.rs     IqStream — ring buffer, settling discard after retune
+    hardware.rs   RTL-SDR register configuration (R820T2 tuner, RTL2832U demod)
+  pipeline/
+    manager.rs    PipelineManager — state machine, DDC, mode switching, crossfade
+    fm.rs         FmPipeline — polar discriminator, pre-filter, stereo pilot, AGC
+    am.rs         AmPipeline — envelope detect, IF filter, bandwidth control, AGC
+    ddc.rs        Ddc — digital down-converter for glitch-free sub-MHz retuning
+    filters.rs    FIR filter, decimating FIR, Kaiser window, firdes helpers
+    spectrum.rs   FftStage (magnitude spectrum) + WaveformStage (display snapshots)
+    mod.rs        DemodPipeline enum — dispatches to FM / AM
 ```
 
-### Threading Model
+---
+
+## Build
+
+### Prerequisites
+
+```bash
+rustup target add aarch64-linux-android x86_64-linux-android
+cargo install cargo-ndk
+```
+
+NDK **27.1.12297006** required. Set `ANDROID_NDK_HOME` to the NDK path before building.
+
+### Build for Android
+
+```bash
+cd rust/sdr_core
+cargo ndk -t aarch64-linux-android -t x86_64-linux-android build --release
+```
+
+Or use the project build script from the repo root:
+
+```bash
+./scripts/build-rust.sh
+```
+
+---
+
+## JNI API
+
+All functions follow the Android JNI naming convention:
 
 ```
-USB read thread      Highest priority — feeds ring buffer from dongle
-DSP thread           Consumes ring buffer — runs demodulation
-Decode thread        Runs heavier decoders (ADS-B, APT)
-Audio thread         Feeds Android AudioTrack
-Callback thread      Pushes decoded data events to Kotlin via JNI
+Java_com_sdrgo_SdrModule_<methodName>
 ```
+
+### Device lifecycle
+
+| Kotlin method | Returns | Description |
+|---|---|---|
+| `coreVersion()` | `String` | Library version string — use to verify the native library loaded correctly |
+| `openDevice(fd, frequencyHz, audioSampleRate, stereo)` | `Boolean` | Open USB file descriptor and initialize the pipeline. `audioSampleRate` sets the PCM output rate (48 000 or 96 000 Hz). `stereo` enables stereo decode for WFM |
+| `closeDevice()` | `void` | Tear down the pipeline and release the USB device |
+
+### Tuning
+
+| Kotlin method | Returns | Description |
+|---|---|---|
+| `setFrequency(frequencyHz)` | `Int` | 0 = error, 1 = DDC software tune (glitch-free, ≤ ±1 MHz offset), 2 = hardware retune (settling started) |
+
+### Gain
+
+| Kotlin method | Returns | Description |
+|---|---|---|
+| `setGain(tenthsDb)` | `Boolean` | Hardware gain in tenths of dB (e.g. 280 = 28.0 dB). Pass 0 for auto-gain (AGC) |
+| `getTunerGains()` | `IntArray` | Available hardware gain steps in tenths of dB |
+
+### Mode
+
+| Kotlin method | Returns | Description |
+|---|---|---|
+| `setMode(mode)` | `Boolean` | 0 = WFM, 1 = NFM, 2 = AM-DSB, 3 = AM-USB, 4 = AM-LSB. Transitions are crossfaded |
+| `isStereoDetected()` | `Boolean` | True when a 19 kHz pilot tone is present in the signal (WFM only) |
+
+### Audio
+
+| Kotlin method | Returns | Description |
+|---|---|---|
+| `getAudioBuffer()` | `FloatArray` | Interleaved stereo float PCM `[L0, R0, L1, R1, …]`. Call from a tight loop; drives AudioTrack |
+
+### Display outputs
+
+| Kotlin method | Returns | Description |
+|---|---|---|
+| `getIqWaveform()` | `FloatArray` | 512-sample IQ envelope snapshot, captured pre-demod. Empty array if no new data since last call |
+| `getAudioWaveform()` | `FloatArray` | 512-sample audio PCM snapshot, captured post-demod. Empty array if no new data since last call |
+| `getSpectrum()` | `FloatArray` | Hann-windowed magnitude spectrum in dBFS, 1024 bins. Empty array if insufficient IQ buffered |
 
 ---
 
 ## Supported Hardware
 
-| Hardware | Status |
+| Device | Status |
 |---|---|
-| RTL-SDR Blog V3 | 🚧 In progress |
+| RTL-SDR Blog V3 | ✅ Working |
 | RTL-SDR Blog V4 | 🔜 Planned |
-| NooElec NESDR SMArt | 🔜 Planned |
+| NooElec NESDR SMArt | 🔜 Untested |
 | HackRF One | 🔜 Future |
 | Airspy | 🔜 Future |
 
 ---
 
-## Supported Bands and Modes
+## Roadmap
 
-| Band | Frequency | Mode | Status |
-|---|---|---|---|
-| FM Broadcast | 87.5 – 108 MHz | WFM | 🔜 Planned |
-| NOAA Weather | 162.400 – 162.550 MHz | NFM + SAME/EAS | 🔜 Planned |
-| VHF Air Band | 118 – 137 MHz | AM + Squelch | 🔜 Planned |
-| ADS-B | 1090 MHz | Mode S decode | 🔜 Planned |
-| NOAA Satellites | 137.500 – 137.912 MHz | APT imagery | 🔜 Planned |
-| AM Broadcast | 520 – 1710 kHz | AM | 🔜 Planned |
-| Shortwave | 1.7 – 30 MHz | AM / SSB | 🔜 Planned |
-
----
-
-## Using sdr_core in Your Project
-
-### As a Cargo dependency (once published)
-
-```toml
-[dependencies]
-sdr_core = "0.1.0"
-```
-
-### During development (path dependency)
-
-```toml
-[dependencies]
-sdr_core = { path = "../sdr-core" }
-```
-
-### Android NDK integration
-
-`sdr_core` compiles to a `.so` via `cargo-ndk` and is linked into your Android app via CMake. See the [SDRGo integration example](https://github.com/utterback/sdrgo) for a complete working setup including CMakeLists.txt and Kotlin JNI bridge.
-
-### Prerequisites
-
-```bash
-# Install Android targets
-rustup target add \
-  aarch64-linux-android \
-  armv7-linux-androideabi \
-  x86_64-linux-android \
-  i686-linux-android
-
-# Install cargo-ndk
-cargo install cargo-ndk
-
-# Build for Android
-cargo ndk \
-  -t aarch64-linux-android \
-  -t x86_64-linux-android \
-  build --release
-```
-
----
-
-## JNI API Reference
-
-All functions exposed to Kotlin are in `src/jni/`. They follow Android JNI naming convention:
-
-```
-Java_{package}_{ClassName}_{methodName}
-```
-
-### Core
-
-| Kotlin Method | Description |
-|---|---|
-| `SdrModule.coreVersion()` | Returns library version string — use to verify pipeline is wired correctly |
-
-*More methods will be documented here as modules are completed.*
-
----
-
-## Expo / React Native module wrapper (planned)
-
-When the driver API is stable, `sdr_core` will be wrapped as a standalone Expo module so it can be consumed by any Expo or bare React Native app via `npx expo install sdr-core`.
-
-### Why a module wrapper
-
-Currently the Rust library is integrated directly into the SDRGo app — the app owns the CMake build, the Kotlin bridge, and the TypeScript wrapper. That works for a single app but isn't distributable. An Expo module package moves all of that into a self-contained npm package that handles its own native build, so consumers get everything with one install command.
-
-### Steps to create the module
-
-1. **Scaffold the package**
-
-   ```bash
-   npx create-expo-module sdr-core --no-example
-   ```
-
-2. **Move the Rust source** into `sdr-core/rust/` alongside `Cargo.toml` and `src/lib.rs`
-
-3. **Move the Kotlin bridge** — copy `SdrModule.kt` into the module's Android source tree; migrate from `ReactContextBaseJavaModule` to expo-modules-core's `Module` class so Expo handles registration automatically
-
-4. **Move the CMake setup** — the module's `android/CMakeLists.txt` owns the Rust IMPORTED library and the `ReactNative-application.cmake` include; the app's `build.gradle` drops its `externalNativeBuild` block entirely
-
-5. **Move the TypeScript wrapper** — `SdrModule.ts` (including the `driverError` availability check and all public methods) becomes the module's JS entry point
-
-6. **Add a build hook** — write an Expo config plugin (`plugin/src/index.ts`) that runs `build-rust.sh` for the target ABI as part of `expo prebuild`, so the `.so` is always compiled before the Android build starts
-
-7. **Publish to npm** — update the SDRGo app to `npx expo install sdr-core` and import from the package instead of the local `./src/modules/SdrModule`
-
-### Pure native Android consumers
-
-The Kotlin JNI bridge and compiled `.so` can be distributed as an Android AAR independently of the React Native layer. The JNI function signatures in `src/lib.rs` are stable C ABI and have no React Native dependency.
-
----
-
-## Publishing to crates.io
-
-When the API reaches stability (v1.0.0):
-
-1. Ensure `Cargo.toml` metadata is complete — `description`, `repository`, `keywords`, `categories`, `license`
-2. Verify `README.md` and `LICENSE-MIT` / `LICENSE-APACHE` are present
-3. Do a dry run to catch any issues:
-```bash
-cargo publish --dry-run
-```
-4. Login to crates.io with your GitHub account:
-```bash
-cargo login
-```
-5. Publish:
-```bash
-cargo publish
-```
-
-Suggested crates.io keywords: `sdr`, `rtl-sdr`, `android`, `signal-processing`, `radio`
-
-Suggested crates.io categories: `embedded`, `network-programming`, `science`
-
-> Note: Once published, a version cannot be deleted — only yanked. Take the dry run seriously.
-
----
-
-## Contributing
-
-Contributions welcome once the core API stabilizes. Until v1.0.0 the architecture is still evolving and large PRs may conflict with in-progress work. Opening an issue to discuss first is recommended.
+- **NFM** — narrow-band FM for voice and utility bands; no stereo, no RDS
+- **RDS decoder (WFM)** — 57 kHz subcarrier extraction, BPSK demod, clock recovery, CRC-10 group decode → PS / RT / PTY / PI
+- **Parametric EQ** — up to 7 bands (bell peak + low/high shelf filters) applied at audio rate inside the Rust pipeline
+- **Signal strength (RMS)** — IQ power measurement captured as a parallel output alongside the waveform snapshots
+- **AM SAM / SSB** — synchronous AM and single-sideband modes (infrastructure in place, demod logic stubbed)
+- **AdaptiveFirFilter** — crossfade between filter coefficients during bandwidth changes to eliminate click artifacts
 
 ---
 
@@ -228,10 +166,4 @@ Licensed under either of:
 - MIT License ([LICENSE-MIT](LICENSE-MIT))
 - Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
 
-at your option.
-
-This dual license is standard in the Rust ecosystem and imposes no restrictions on use in commercial or closed-source applications. If you modify and redistribute `sdr_core` itself, you may choose either license.
-
-### Why dual MIT/Apache 2.0?
-
-MIT is simple and maximally permissive. Apache 2.0 adds an explicit patent grant protecting users from patent claims related to the library. Offering both lets downstream users choose whichever is compatible with their project's license requirements.
+at your option. Both licenses are permissive and impose no restrictions on commercial or closed-source use.

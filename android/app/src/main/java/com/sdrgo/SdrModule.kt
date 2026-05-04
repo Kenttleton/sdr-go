@@ -38,20 +38,22 @@ class SdrModule(reactContext: ReactApplicationContext) :
         @JvmStatic external fun openDevice(
             fd: Int,
             frequencyHz: Long,
+            audioSampleRate: Int,
             stereo: Boolean,
-            stationsMode: Boolean
         ): Boolean
-        @JvmStatic external fun setFrequency(frequencyHz: Long): Boolean
+        // Returns 0 = error, 1 = DDC software tune, 2 = hardware retune (settling started).
+        @JvmStatic external fun setFrequency(frequencyHz: Long): Int
+        @JvmStatic external fun setGain(tenthsDb: Int): Boolean
+        @JvmStatic external fun getTunerGains(): IntArray
         @JvmStatic external fun getAudioBuffer(): FloatArray
+        @JvmStatic external fun getIqWaveform(): FloatArray
+        @JvmStatic external fun getAudioWaveform(): FloatArray
+        @JvmStatic external fun getSpectrum(): FloatArray
+        @JvmStatic external fun setMode(mode: Int): Boolean
+        @JvmStatic external fun setAmBandwidth(bandwidthHz: Float): Boolean
+        @JvmStatic external fun getSignalStrength(): Float
         @JvmStatic external fun isStereoDetected(): Boolean
         @JvmStatic external fun closeDevice()
-        @JvmStatic external fun nativeGetSignalStrength(): Float
-        @JvmStatic external fun nativeGetRdsInfo(): String
-        @JvmStatic external fun nativeSetGain(tenthsDb: Int, autoGain: Boolean): Boolean
-        @JvmStatic external fun nativeGetAvailableGains(): IntArray
-        @JvmStatic external fun nativeSetEq(bands: FloatArray): Boolean
-        @JvmStatic external fun nativeSetMonoMode(mono: Boolean): Boolean
-        @JvmStatic external fun nativeFlushStream()
     }
 
     private val usbPermissionManager = UsbPermissionManager(reactContext)
@@ -119,7 +121,7 @@ class SdrModule(reactContext: ReactApplicationContext) :
         try {
             currentAudioRate = if (stationsMode) 48_000 else 96_000
             emitLog("log", "startFm: fd=$fd freq=${frequencyHz.toLong()} stereo=$stereo stations=$stationsMode audioRate=$currentAudioRate")
-            val opened = openDevice(fd, frequencyHz.toLong(), stereo, stationsMode)
+            val opened = openDevice(fd, frequencyHz.toLong(), currentAudioRate, stereo)
             if (!opened) {
                 emitLog("error", "startFm: openDevice returned false")
                 promise.reject("SDR_ERROR", "Failed to open device")
@@ -138,7 +140,7 @@ class SdrModule(reactContext: ReactApplicationContext) :
     @ReactMethod
     fun tuneFrequency(frequencyHz: Double, promise: Promise) {
         try {
-            promise.resolve(setFrequency(frequencyHz.toLong()))
+            promise.resolve(setFrequency(frequencyHz.toLong()) != 0)
         } catch (e: Exception) {
             promise.reject("SDR_ERROR", e.message)
         }
@@ -199,60 +201,106 @@ class SdrModule(reactContext: ReactApplicationContext) :
         promise.resolve(arr)
     }
 
+    @ReactMethod
+    fun getIqWaveform(promise: Promise) {
+        val raw = getIqWaveform()
+        if (raw.isEmpty()) { promise.resolve(null); return }
+        val arr = Arguments.createArray()
+        for (f in raw) arr.pushDouble(f.toDouble())
+        promise.resolve(arr)
+    }
+
+    @ReactMethod
+    fun getAudioWaveform(promise: Promise) {
+        val raw = getAudioWaveform()
+        if (raw.isEmpty()) { promise.resolve(null); return }
+        val arr = Arguments.createArray()
+        for (f in raw) arr.pushDouble(f.toDouble())
+        promise.resolve(arr)
+    }
+
+    @ReactMethod
+    fun getSpectrum(promise: Promise) {
+        val raw = getSpectrum()
+        if (raw.isEmpty()) { promise.resolve(null); return }
+        val arr = Arguments.createArray()
+        for (f in raw) arr.pushDouble(f.toDouble())
+        promise.resolve(arr)
+    }
+
     // ── Signal strength ────────────────────────────────────────────────────────
 
     @ReactMethod
     fun getSignalStrength(promise: Promise) {
-        promise.resolve(nativeGetSignalStrength().toDouble())
+        promise.resolve(getSignalStrength().toDouble())
+    }
+
+    // ── Mode ───────────────────────────────────────────────────────────────────
+    // 0 = WFM, 1 = NFM, 2 = AM-DSB, 3 = AM-USB, 4 = AM-LSB
+
+    @ReactMethod
+    fun setMode(mode: Int, promise: Promise) {
+        try {
+            promise.resolve(setMode(mode))
+        } catch (e: Exception) {
+            promise.reject("SDR_ERROR", e.message)
+        }
+    }
+
+    // ── AM bandwidth ───────────────────────────────────────────────────────────
+
+    @ReactMethod
+    fun setAmBandwidth(bandwidthHz: Double, promise: Promise) {
+        try {
+            promise.resolve(setAmBandwidth(bandwidthHz.toFloat()))
+        } catch (e: Exception) {
+            promise.reject("SDR_ERROR", e.message)
+        }
     }
 
     // ── RDS data ───────────────────────────────────────────────────────────────
+    // Placeholder until the RDS decoder is implemented in sdr_core.
 
     @ReactMethod
     fun getRdsInfo(promise: Promise) {
-        promise.resolve(nativeGetRdsInfo())
+        promise.resolve("{}")
     }
 
     // ── Hardware gain ──────────────────────────────────────────────────────────
 
     @ReactMethod
     fun getAvailableGains(promise: Promise) {
-        val gains = nativeGetAvailableGains()
+        val gains = getTunerGains()
         val arr = Arguments.createArray()
         for (g in gains) arr.pushInt(g)
         promise.resolve(arr)
     }
 
+    // autoGain=true → pass 0 so the Rust driver enables AGC.
     @ReactMethod
     fun setGain(tenthsDb: Int, autoGain: Boolean, promise: Promise) {
         try {
-            promise.resolve(nativeSetGain(tenthsDb, autoGain))
+            promise.resolve(setGain(if (autoGain) 0 else tenthsDb))
         } catch (e: Exception) {
             promise.reject("SDR_ERROR", e.message)
         }
     }
 
     // ── EQ ─────────────────────────────────────────────────────────────────────
+    // Placeholder until parametric EQ is implemented in sdr_core.
 
     @ReactMethod
     fun setEq(bands: ReadableArray, promise: Promise) {
-        try {
-            val floats = FloatArray(bands.size()) { bands.getDouble(it).toFloat() }
-            promise.resolve(nativeSetEq(floats))
-        } catch (e: Exception) {
-            promise.reject("SDR_ERROR", e.message)
-        }
+        promise.resolve(false)
     }
 
     // ── Mono mode ──────────────────────────────────────────────────────────────
+    // Stereo is auto-detected from the pilot tone in WFM; there is no manual
+    // mono override in the current pipeline.
 
     @ReactMethod
     fun setMonoMode(mono: Boolean, promise: Promise) {
-        try {
-            promise.resolve(nativeSetMonoMode(mono))
-        } catch (e: Exception) {
-            promise.reject("SDR_ERROR", e.message)
-        }
+        promise.resolve(false)
     }
 
     // ── Scan ───────────────────────────────────────────────────────────────────
@@ -305,7 +353,7 @@ class SdrModule(reactContext: ReactApplicationContext) :
                 // Drain a small IQ block to update signal_power
                 getAudioBuffer()
 
-                val strength = nativeGetSignalStrength()
+                val strength = getSignalStrength()
                 emitEvent("onScanProgress", Arguments.createMap().apply {
                     putDouble("frequencyHz", freq.toDouble())
                     putDouble("strength", strength.toDouble())
@@ -445,7 +493,7 @@ class SdrModule(reactContext: ReactApplicationContext) :
                         emitLog("log", "audioLoop: first chunk — ${pcm.size} floats")
                     } else if (frameCount % 500L == 0L) {
                         emitLog("log", "audioLoop: frame #$frameCount pcm=${pcm.size} signal=${
-                            String.format("%.4f", nativeGetSignalStrength())}")
+                            String.format("%.4f", getSignalStrength())}")
                     }
 
                     // Side-effects on the PCM chunk before handing it off
