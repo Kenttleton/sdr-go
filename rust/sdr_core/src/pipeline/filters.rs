@@ -31,6 +31,7 @@ pub mod firdes {
 pub struct FirFilter {
     inner: futuredsp::FirFilter<f32, f32, Vec<f32>>,
     history: Vec<f32>,
+    ext_buf: Vec<f32>,
 }
 
 impl FirFilter {
@@ -39,6 +40,7 @@ impl FirFilter {
         Self {
             inner: futuredsp::FirFilter::new(taps),
             history: vec![0.0; overlap],
+            ext_buf: Vec::new(),
         }
     }
 
@@ -50,18 +52,17 @@ impl FirFilter {
         self.history.resize(new_overlap, 0.0);
     }
 
-    pub fn process(&mut self, input: &[f32]) -> Vec<f32> {
+    pub fn process_into(&mut self, input: &[f32], out: &mut Vec<f32>) {
         let h = self.history.len();
-        let mut ext = Vec::with_capacity(h + input.len());
-        ext.extend_from_slice(&self.history);
-        ext.extend_from_slice(input);
+        self.ext_buf.clear();
+        self.ext_buf.extend_from_slice(&self.history);
+        self.ext_buf.extend_from_slice(input);
 
-        let mut out = vec![0.0f32; input.len()];
-        self.inner.filter(&ext, &mut out);
+        out.resize(input.len(), 0.0);
+        self.inner.filter(&self.ext_buf, out);
 
-        let start = ext.len() - h;
-        self.history.copy_from_slice(&ext[start..]);
-        out
+        let start = self.ext_buf.len() - h;
+        self.history.copy_from_slice(&self.ext_buf[start..]);
     }
 }
 
@@ -71,6 +72,7 @@ pub struct DecimatingFirFilter {
     inner: futuredsp::DecimatingFirFilter<f32, f32, Vec<f32>>,
     history: Vec<f32>,
     decimation: usize,
+    ext_buf: Vec<f32>,
 }
 
 impl DecimatingFirFilter {
@@ -80,24 +82,24 @@ impl DecimatingFirFilter {
             inner: futuredsp::DecimatingFirFilter::new(decimation, taps),
             history: vec![0.0; overlap],
             decimation,
+            ext_buf: Vec::new(),
         }
     }
 
     /// Produces `floor(input.len() / decimation)` samples.
     /// Leftover input is captured in history for the next call.
-    pub fn process(&mut self, input: &[f32]) -> Vec<f32> {
+    pub fn process_into(&mut self, input: &[f32], out: &mut Vec<f32>) {
         let h = self.history.len();
-        let mut ext = Vec::with_capacity(h + input.len());
-        ext.extend_from_slice(&self.history);
-        ext.extend_from_slice(input);
+        self.ext_buf.clear();
+        self.ext_buf.extend_from_slice(&self.history);
+        self.ext_buf.extend_from_slice(input);
 
         let out_len = input.len() / self.decimation;
-        let mut out = vec![0.0f32; out_len];
-        self.inner.filter(&ext, &mut out);
+        out.resize(out_len, 0.0);
+        self.inner.filter(&self.ext_buf, out);
 
-        let start = ext.len() - h;
-        self.history.copy_from_slice(&ext[start..]);
-        out
+        let start = self.ext_buf.len() - h;
+        self.history.copy_from_slice(&self.ext_buf[start..]);
     }
 }
 
@@ -110,6 +112,7 @@ pub struct ComplexDecimatingFirFilter {
     inner: futuredsp::DecimatingFirFilter<Cf32, Cf32, Vec<f32>>,
     history: Vec<Cf32>,
     decimation: usize,
+    ext_buf: Vec<Cf32>,
 }
 
 impl ComplexDecimatingFirFilter {
@@ -119,21 +122,21 @@ impl ComplexDecimatingFirFilter {
             inner: futuredsp::DecimatingFirFilter::new(decimation, taps),
             history: vec![Cf32::new(0.0, 0.0); overlap],
             decimation,
+            ext_buf: Vec::new(),
         }
     }
 
-    pub fn process(&mut self, input: &[Cf32]) -> Vec<Cf32> {
+    pub fn process_into(&mut self, input: &[Cf32], out: &mut Vec<Cf32>) {
         let h = self.history.len();
-        let mut ext = Vec::with_capacity(h + input.len());
-        ext.extend_from_slice(&self.history);
-        ext.extend_from_slice(input);
+        self.ext_buf.clear();
+        self.ext_buf.extend_from_slice(&self.history);
+        self.ext_buf.extend_from_slice(input);
 
         let out_len = input.len() / self.decimation;
-        let mut out = vec![Cf32::new(0.0, 0.0); out_len];
-        self.inner.filter(&ext, &mut out);
+        out.resize(out_len, Cf32::new(0.0, 0.0));
+        self.inner.filter(&self.ext_buf, out);
 
-        let start = ext.len() - h;
-        self.history.copy_from_slice(&ext[start..]);
-        out
+        let start = self.ext_buf.len() - h;
+        self.history.copy_from_slice(&self.ext_buf[start..]);
     }
 }

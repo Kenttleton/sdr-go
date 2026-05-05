@@ -23,7 +23,7 @@ enum PipelineState {
     /// Hardware just retuned; discard this many output samples while PLL/AGC settle.
     Retuning { samples_remaining: usize },
     /// Two demodulators running simultaneously; outputs blended over `crossfade_len`
-    /// PCM elements (~1024 stereo frames).  `self.demod` is the incoming pipeline.
+    /// stereo frames.  `self.demod` is the incoming pipeline.
     CrossfadingMode {
         outgoing: DemodPipeline,
         progress: usize,
@@ -39,6 +39,7 @@ pub struct PipelineManager {
     stereo: bool,
     ddc: Ddc,
     center_hz: u32,
+    out_scratch: Vec<f32>,
 }
 
 impl PipelineManager {
@@ -51,6 +52,7 @@ impl PipelineManager {
             stereo,
             ddc: Ddc::new(input_rate as f32),
             center_hz,
+            out_scratch: Vec::new(),
         }
     }
 
@@ -85,8 +87,8 @@ impl PipelineManager {
     // ── Mode switching ────────────────────────────────────────────────────────
 
     /// Begin a smooth mode transition.  Both demodulators run on every IQ block
-    /// during the crossfade; their outputs are linearly blended over 2048 PCM
-    /// elements (~1024 stereo frames at 48 kHz ≈ 21 ms).
+    /// during the crossfade; their outputs are linearly blended over 1024 stereo
+    /// frames at 48 kHz ≈ 21 ms.
     pub fn switch_mode(&mut self, mode: PipelineMode) {
         // Drop any in-progress transition cleanly before starting a new one.
         self.state = PipelineState::Stable;
@@ -100,7 +102,7 @@ impl PipelineManager {
         self.state = PipelineState::CrossfadingMode {
             outgoing,
             progress: 0,
-            crossfade_len: 2048,
+            crossfade_len: 1024,
         };
     }
 
@@ -131,14 +133,14 @@ impl PipelineManager {
     ///
     /// Takes ownership so DDC can be applied in-place.  The waveform snapshot
     /// in `lib.rs` is captured before this call and always reflects raw RF.
-    pub fn process_iq(&mut self, mut iq: Vec<Cf32>) -> Vec<f32> {
+    pub fn process_iq(&mut self, mut iq: Vec<Cf32>, out: &mut Vec<f32>) {
         self.ddc.process(&mut iq);
 
         // Replace state with Stable so we can move out of it; re-set below.
         match std::mem::replace(&mut self.state, PipelineState::Stable) {
             PipelineState::Stable => {
                 self.state = PipelineState::Stable;
-                self.demod.process_iq(&iq)
+                self.demod.process_iq(&iq, out);
             }
 
             PipelineState::Retuning { mut samples_remaining } => {
@@ -149,7 +151,7 @@ impl PipelineManager {
                 } else {
                     PipelineState::Stable
                 };
-                Vec::new()
+                out.clear();
             }
 
             PipelineState::CrossfadingMode {
@@ -157,14 +159,15 @@ impl PipelineManager {
                 mut progress,
                 crossfade_len,
             } => {
-                let out_pcm = outgoing.process_iq(&iq);
-                let in_pcm = self.demod.process_iq(&iq);
+                // Outgoing → scratch, incoming → out, then blend out in-place.
+                outgoing.process_iq(&iq, &mut self.out_scratch);
+                self.demod.process_iq(&iq, out);
 
-                let len = out_pcm.len().min(in_pcm.len());
-                let mut blended = Vec::with_capacity(len);
-                for i in 0..len {
+                let len = self.out_scratch.len().min(out.len());
+                for i in (0..len).step_by(2) {
                     let alpha = (progress as f32 / crossfade_len as f32).min(1.0);
-                    blended.push(out_pcm[i] * (1.0 - alpha) + in_pcm[i] * alpha);
+                    out[i]     = self.out_scratch[i]     * (1.0 - alpha) + out[i]     * alpha;
+                    out[i + 1] = self.out_scratch[i + 1] * (1.0 - alpha) + out[i + 1] * alpha;
                     progress += 1;
                 }
 
@@ -178,10 +181,16 @@ impl PipelineManager {
                         crossfade_len,
                     };
                 }
-
-                blended
             }
         }
+    }
+
+    pub fn rssi_db(&self) -> f32 {
+        self.demod.rssi_db()
+    }
+
+    pub fn set_squelch(&mut self, threshold_db: f32, hang_ms: f32) {
+        self.demod.set_squelch(threshold_db, hang_ms);
     }
 
     pub fn is_stereo_detected(&self) -> bool {

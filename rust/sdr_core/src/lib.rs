@@ -4,6 +4,7 @@
 #![allow(unused_imports)]
 
 mod pipeline;
+pub mod service;
 mod usb;
 
 use once_cell::sync::Lazy;
@@ -28,6 +29,7 @@ struct Pipeline {
     manager: PipelineManager,
     fft: FftStage,
     waveform: WaveformStage,
+    pcm_buf: Vec<f32>,
 }
 
 unsafe impl Send for Pipeline {}
@@ -83,6 +85,7 @@ pub unsafe extern "C" fn Java_com_sdrgo_SdrModule_openDevice(
                 manager,
                 fft: FftStage::new(2048),
                 waveform: WaveformStage::new(),
+                pcm_buf: Vec::new(),
             });
             1
         }
@@ -214,15 +217,15 @@ pub unsafe extern "C" fn Java_com_sdrgo_SdrModule_getAudioBuffer(
     p.waveform.update_iq(&iq);
     p.waveform.update_rms(&iq);
 
-    let pcm = p.manager.process_iq(iq);
+    p.manager.process_iq(iq, &mut p.pcm_buf);
 
-    if !pcm.is_empty() {
-        p.waveform.update_audio(&pcm);
+    if !p.pcm_buf.is_empty() {
+        p.waveform.update_audio(&p.pcm_buf);
     }
 
-    match env.new_float_array(pcm.len() as i32) {
+    match env.new_float_array(p.pcm_buf.len() as i32) {
         Ok(arr) => {
-            let _ = env.set_float_array_region(&arr, 0, &pcm);
+            let _ = env.set_float_array_region(&arr, 0, &p.pcm_buf);
             arr.into_raw()
         }
         Err(_) => empty,
@@ -378,6 +381,30 @@ pub unsafe extern "C" fn Java_com_sdrgo_SdrModule_getSignalStrength(
         .as_ref()
         .map(|p| p.waveform.signal_strength())
         .unwrap_or(0.0)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Java_com_sdrgo_SdrModule_getRssi(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jfloat {
+    PIPELINE
+        .lock()
+        .as_ref()
+        .map(|p| p.manager.rssi_db())
+        .unwrap_or(-100.0)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Java_com_sdrgo_SdrModule_setSquelch(
+    _env: JNIEnv,
+    _class: JClass,
+    threshold_db: jfloat,
+    hang_ms: jfloat,
+) {
+    if let Some(p) = PIPELINE.lock().as_mut() {
+        p.manager.set_squelch(threshold_db, hang_ms);
+    }
 }
 
 #[unsafe(no_mangle)]

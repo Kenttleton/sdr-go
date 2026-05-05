@@ -55,10 +55,10 @@ impl DemodPipeline {
         Self::Am(p)
     }
 
-    pub fn process_iq(&mut self, iq: &[Cf32]) -> Vec<f32> {
+    pub fn process_iq(&mut self, iq: &[Cf32], out: &mut Vec<f32>) {
         match self {
-            Self::Fm(p) => p.process_iq(iq),
-            Self::Am(p) => p.process_iq(iq),
+            Self::Fm(p) => p.process_iq(iq, out),
+            Self::Am(p) => p.process_iq(iq, out),
         }
     }
 
@@ -107,6 +107,20 @@ impl DemodPipeline {
     }
 
     // ── Shared queries ────────────────────────────────────────────────────────
+
+    pub fn rssi_db(&self) -> f32 {
+        match self {
+            Self::Fm(p) => p.rssi_db(),
+            Self::Am(p) => p.rssi_db(),
+        }
+    }
+
+    pub fn set_squelch(&mut self, threshold_db: f32, hang_ms: f32) {
+        match self {
+            Self::Fm(p) => p.set_squelch(threshold_db, hang_ms),
+            Self::Am(p) => p.set_squelch(threshold_db, hang_ms),
+        }
+    }
 
     pub fn is_stereo_detected(&self) -> bool {
         match self {

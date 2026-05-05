@@ -60,6 +60,15 @@ pub struct AmPipeline {
     agc_frozen: bool,
 
     output_rate: u32,
+
+    rssi_db: f32,
+    squelch_db: f32,
+    squelch_hang_samples: usize,
+    squelch_hang_remaining: usize,
+
+    decimated_buf: Vec<Cf32>,
+    dc_blocked_buf: Vec<f32>,
+    filtered_buf: Vec<f32>,
 }
 
 impl AmPipeline {
@@ -104,6 +113,13 @@ impl AmPipeline {
             agc_gain: 1.0,
             agc_frozen: false,
             output_rate,
+            rssi_db: -100.0,
+            squelch_db: f32::NEG_INFINITY,
+            squelch_hang_samples: 0,
+            squelch_hang_remaining: 0,
+            decimated_buf: Vec::new(),
+            dc_blocked_buf: Vec::new(),
+            filtered_buf: Vec::new(),
         }
     }
 
@@ -131,36 +147,53 @@ impl AmPipeline {
         }
     }
 
-    /// Returns interleaved stereo PCM [L0, R0, L1, R1, …] with L == R (mono source).
-    pub fn process_iq(&mut self, iq: &[Cf32]) -> Vec<f32> {
-        // Stage 1: IQ anti-alias + decimate
-        let decimated = self.pre_filter.process(iq);
+    /// Writes interleaved stereo PCM [L0, R0, L1, R1, …] into `out` (L == R, mono source).
+    pub fn process_iq(&mut self, iq: &[Cf32], out: &mut Vec<f32>) {
+        // RSSI — instantaneous in-band power in dBFS
+        let power = iq.iter().map(|c| c.norm_sqr()).sum::<f32>() / iq.len() as f32;
+        self.rssi_db = 10.0 * power.max(1e-10).log10();
 
-        if decimated.is_empty() {
-            return Vec::new();
+        // Squelch gate
+        if self.rssi_db < self.squelch_db {
+            if self.squelch_hang_remaining == 0 {
+                out.clear();
+                return;
+            }
+        } else {
+            self.squelch_hang_remaining = self.squelch_hang_samples;
+        }
+
+        // Stage 1: IQ anti-alias + decimate
+        self.pre_filter.process_into(iq, &mut self.decimated_buf);
+
+        if self.decimated_buf.is_empty() {
+            out.clear();
+            return;
         }
 
         // Stage 2: envelope detect + Stage 3: DC block (IIR, kept per-sample)
-        let mut dc_blocked = Vec::with_capacity(decimated.len());
-        for &s in &decimated {
+        self.dc_blocked_buf.clear();
+        for i in 0..self.decimated_buf.len() {
+            let s = self.decimated_buf[i];
             let demod = match self.mode {
                 AmMode::Envelope => s.norm(),
                 AmMode::Sam | AmMode::Usb | AmMode::Lsb | AmMode::Dsb => s.norm(),
             };
             self.dc_state += self.dc_alpha * (demod - self.dc_state);
-            dc_blocked.push(demod - self.dc_state);
+            self.dc_blocked_buf.push(demod - self.dc_state);
         }
 
         // Stage 4: IF filter
-        let filtered = self.audio_filter.process(&dc_blocked);
+        self.audio_filter.process_into(&self.dc_blocked_buf, &mut self.filtered_buf);
 
         // Stage 5: AGC + decimate to output rate + mono → interleaved stereo
         let audio_decimation = ((self.intermediate_rate / self.output_rate) as usize).max(1);
-        let out_len = filtered.len() / audio_decimation;
-        let mut out = Vec::with_capacity(out_len * 2);
+        let out_frames = self.filtered_buf.len() / audio_decimation;
+        out.clear();
+        out.reserve(out_frames * 2);
 
-        for &s in filtered.iter().step_by(audio_decimation) {
-            let gained = s * self.agc_gain;
+        for i in (0..self.filtered_buf.len()).step_by(audio_decimation) {
+            let gained = self.filtered_buf[i] * self.agc_gain;
             if !self.agc_frozen {
                 if gained.abs() > 0.8 {
                     self.agc_gain *= 0.999;
@@ -169,14 +202,30 @@ impl AmPipeline {
                 }
                 self.agc_gain = self.agc_gain.clamp(0.001, 100.0);
             }
-            out.push(gained);
-            out.push(gained);
+            let clipped = soft_clip(gained);
+            out.push(clipped);
+            out.push(clipped);
         }
 
-        out
+        self.squelch_hang_remaining =
+            self.squelch_hang_remaining.saturating_sub(out.len() / 2);
+    }
+
+    pub fn rssi_db(&self) -> f32 {
+        self.rssi_db
+    }
+
+    pub fn set_squelch(&mut self, threshold_db: f32, hang_ms: f32) {
+        self.squelch_db = threshold_db;
+        self.squelch_hang_samples =
+            (hang_ms * self.output_rate as f32 / 1000.0).round() as usize;
     }
 
     fn make_audio_taps_hz(cutoff_hz: f32, rate: u32) -> Vec<f32> {
         firdes::lowpass(cutoff_hz / rate as f32, firdes::Kaiser::new(40.0))
     }
+}
+
+fn soft_clip(x: f32) -> f32 {
+    x / (1.0 + x.abs())
 }
