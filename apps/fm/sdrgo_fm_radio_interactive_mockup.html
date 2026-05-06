@@ -15,6 +15,8 @@
     --signal: #00e87a;
     --signal-dim: rgba(0, 232, 122, 0.12);
     --danger: #ff3b5c;
+    --secondary: #585191;
+    --secondary-shadow: #4f359b;
     --text: #f2ede8;
     --text2: #9088a0;
     --text3: #3d3550;
@@ -82,15 +84,6 @@
     z-index: 1;
   }
 
-  /* ── Top bar ── */
-  #top-bar {
-    position: relative;
-    z-index: 2;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 52px 20px 8px;
-  }
   .icon-btn {
     background: none;
     border: none;
@@ -103,7 +96,6 @@
     font-size: 18px;
   }
   #rds-center {
-    flex: 1;
     text-align: center;
   }
   #rds-station {
@@ -144,12 +136,14 @@
   .status-row {
     display: flex;
     width: 100%;
-    align-items: center;
-    justify-content: space-between;
   }
   .band-toggle {
+    position: absolute;
+    top: 52px;
     display: flex;
     background: var(--surface2);
+    align-items: center;
+    justify-content: space-between;
     border-radius: 8px;
     padding: 3px;
     gap: 2px;
@@ -174,6 +168,8 @@
   .pills {
     display: flex;
     gap: 6px;
+    justify-content: center;
+    margin-top: 52px;
   }
   .pill {
     padding: 3px 8px;
@@ -221,9 +217,13 @@
 
   /* Frequency */
   #freq-wrap {
+    display: flex;
     cursor: pointer;
-    text-align: center;
+    justify-content: center;
     position: relative;
+    align-items: center;
+    width: 100%;
+    margin-top: 124px;
   }
   #freq-display {
     display: flex;
@@ -272,7 +272,7 @@
   #hw-freq-info {
     font-size: 9px;
     letter-spacing: 1px;
-    color: var(--text3);
+    color: var(--text2);
     margin-top: 2px;
     font-family: var(--mono);
     min-height: 12px;
@@ -311,7 +311,7 @@
     font-size: 9px;
     font-weight: 800;
     letter-spacing: 2px;
-    color: var(--text3);
+    color: var(--text2);
   }
   .snr-val {
     font-size: 11px;
@@ -342,28 +342,26 @@
     color: var(--primary);
   }
 
-  /* ── Knob controls (2-row bottom overlay) ── */
+  /* ── Knob controls ── */
   #knob-controls {
     position: absolute;
-    bottom: 12px;
+    bottom: 72px;
     left: 0;
     right: 0;
-    z-index: 6;
+    z-index: 2;
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 8px;
-  }
-  .knob-ctrl-row {
-    display: flex;
-    align-items: center;
-    gap: 16px;
+    height: stretch;
+    width: 100%;
+    padding-top: 72px;
   }
   .t-btn {
     background: none;
     border: none;
     cursor: pointer;
-    font-size: 18px;
+    font-size: 28px;
     color: var(--text2);
     width: 52px;
     height: 48px;
@@ -381,7 +379,7 @@
     width: 40px;
     height: 40px;
     border-radius: 50%;
-    border: 2px solid var(--border);
+    border: 2px solid var(--text2);
     background: none;
     cursor: pointer;
     display: flex;
@@ -396,7 +394,7 @@
     width: 14px;
     height: 14px;
     border-radius: 50%;
-    background: var(--text3);
+    background: var(--text2);
     transition: all 0.2s;
   }
   #rec-dot-t.recording {
@@ -407,7 +405,7 @@
   /* ── Tuner dock ── */
   #tuner-dock {
     position: relative;
-    z-index: 2;
+    z-index: 3;
     background: var(--surface);
     border-top: 0.5px solid var(--border);
     transition: background 0.3s;
@@ -450,7 +448,7 @@
     left: 187px;
     width: 2px;
     pointer-events: none;
-    z-index: 5;
+    z-index: 3;
   }
   .needle-bar {
     width: 2px;
@@ -604,13 +602,13 @@
     border-radius: 1px;
   }
   #play-btn {
-    width: 52px;
-    height: 52px;
-    border-radius: 26px;
+    width: 80px;
+    height: 80px;
+    border-radius: 40px;
     background: var(--primary);
     border: none;
     cursor: pointer;
-    font-size: 20px;
+    font-size: 28px;
     color: #080608;
     font-weight: 900;
     display: flex;
@@ -622,8 +620,8 @@
       box-shadow 0.2s;
   }
   #play-btn.playing {
-    background: var(--danger);
-    box-shadow: 0 0 16px rgba(255, 59, 92, 0.4);
+    background: var(--secondary);
+    box-shadow: 0 0 16px rgba(203, 156, 242, 0.4);
     color: #fff;
   }
   .step-btns {
@@ -872,57 +870,60 @@
   <div id="app">
     <canvas id="waveform-wrap" width="375" height="400"></canvas>
 
-    <!-- Top bar -->
-    <div id="top-bar">
-      <div class="top-right">
+    <!-- Center display -->
+    <div id="center">
+      <div class="band-toggle">
+        <button
+          class="band-btn active"
+          id="btn-fm"
+          onclick="setDemodulation('fm')"
+        >
+          FM
+        </button>
+        <button class="band-btn" id="btn-am" onclick="setDemodulation('am')">
+          AM
+        </button>
+      </div>
+      <div style="position: absolute; right: 20px; top: 52px">
         <button
           class="icon-btn"
           onclick="toggleSettings()"
           title="Settings"
           style="color: var(--text2); font-size: 18px"
         >
-          ⚙
-        </button>
-        <button
-          class="icon-btn"
-          id="mute-btn"
-          onclick="toggleMute()"
-          title="Mute"
-          style="font-size: 16px"
-        >
-          🔊
-        </button>
-        <button
-          class="icon-btn"
-          id="bm-btn"
-          onclick="toggleBookmark()"
-          title="Bookmark"
-          style="color: var(--text2); font-size: 18px"
-        >
-          ☆
+          <i class="fa-solid fa-gear"></i>
         </button>
       </div>
-    </div>
-
-    <!-- Center display -->
-    <div id="center">
-      <div class="">
-        <div class="status-row">
-          <div class="band-toggle">
-            <button
-              class="band-btn active"
-              id="btn-fm"
-              onclick="setDemodulation('fm')"
-            >
-              FM
-            </button>
-            <button
-              class="band-btn"
-              id="btn-am"
-              onclick="setDemodulation('am')"
-            >
-              AM
-            </button>
+      <div
+        style="
+          position: absolute;
+          display: flex;
+          justify-content: end;
+          width: 100%;
+          padding: 35px 20px 8px;
+          top: 0;
+        "
+      >
+        <div class="pill pill-rec" id="pill-rec" style="display: none">
+          <span class="rec-dot"></span>REC
+        </div>
+      </div>
+      <div
+        style="
+          position: absolute;
+          display: flex;
+          justify-content: start;
+          width: 100%;
+          padding: 35px 20px 8px;
+          top: 0;
+        "
+      >
+        <div class="pills" id="pills">
+          <div class="pill pill-mono" id="pill-mono" style="display: none">
+            MONO
+          </div>
+          <div class="pill pill-stereo" id="pill-stereo" style="display: none">
+            STEREO
           </div>
         </div>
       </div>
@@ -943,29 +944,18 @@
             />
           </div>
         </div>
-        <div id="rds-center">
-          <span id="rds-station">─── scanning ───</span>
-          <span id="rds-text"></span>
-        </div>
-        <div class="pills" id="pills">
-          <div class="pill pill-mono" id="pill-mono" style="display: none">
-            MONO
-          </div>
-          <div class="pill pill-stereo" id="pill-stereo" style="display: none">
-            STEREO
-          </div>
-          <div class="pill pill-rec" id="pill-rec" style="display: none">
-            <span class="rec-dot"></span>REC
-          </div>
-        </div>
-        <div id="hw-freq-info"></div>
+      </div>
+      <div id="rds-center">
+        <span id="rds-station">─── scanning ───</span>
+        <span id="rds-text">No RDS Found</span>
       </div>
 
-      <div id="snr-row" class="snr-row" style="display: none">
+      <div id="hw-freq-info"></div>
+      <div id="snr-row" class="snr-row">
         <span class="snr-label">STRENGTH</span>
         <div class="sig-meter" id="sig-meter"></div>
       </div>
-      <div id="snr-row" class="snr-row" style="display: none">
+      <div id="snr-row" class="snr-row">
         <span class="snr-label">SNR</span>
         <span class="snr-val" id="snr-val">0.0 dB</span>
       </div>
@@ -989,17 +979,40 @@
         </div>
         <div id="knob-shine"></div>
         <div id="knob-controls">
-          <div class="knob-ctrl-row">
-            <button class="t-btn" onclick="stepPreset(-1)" title="Prev preset">
-              ◀◀
-            </button>
-            <button class="t-btn" onclick="stepPreset(1)" title="Next preset">
-              ▶▶
+          <div
+            style="
+              display: flex;
+              flex-direction: row;
+              justify-content: space-between;
+              width: 100%;
+              padding-left: 40px;
+              padding-right: 40px;
+              padding-top: 25px;
+            "
+          >
+            <div>
+              <button
+                class="t-btn"
+                onclick="stepPreset(-1)"
+                title="Prev preset"
+              >
+                <i class="fa-solid fa-backward"></i>
+              </button>
+            </div>
+            <div>
+              <button class="t-btn" onclick="stepPreset(1)" title="Next preset">
+                <i class="fa-solid fa-forward"></i>
+              </button>
+            </div>
+          </div>
+          <div style="position: absolute; top: 110px">
+            <button id="play-btn" onclick="togglePlay()">
+              <i class="fa-solid fa-play"></i>
             </button>
           </div>
-          <div class="knob-ctrl-row">
+          <div style="position: absolute; left: 45px; bottom: 0">
             <button class="eq-btn" onclick="toggleAdvanced()">
-              <span class="eq-btn-label">EQ</span>
+              <span class="eq-btn-label">AUDIO</span>
               <div class="eq-mini">
                 <div class="eq-bar-mini" style="height: 8px"></div>
                 <div class="eq-bar-mini" style="height: 14px"></div>
@@ -1008,10 +1021,35 @@
                 <div class="eq-bar-mini" style="height: 9px"></div>
               </div>
             </button>
-            <button id="play-btn" onclick="togglePlay()">▶</button>
-            <button id="rec-btn-t" onclick="toggleRec()" title="Record">
-              <div id="rec-dot-t"></div>
-            </button>
+          </div>
+          <div style="display: none">
+            <div>
+              <button id="rec-btn-t" onclick="toggleRec()" title="Record">
+                <div id="rec-dot-t"></div>
+              </button>
+            </div>
+            <div>
+              <button
+                class="icon-btn"
+                id="mute-btn"
+                onclick="toggleMute()"
+                title="Mute"
+                style="color: var(--text2); font-size: 18px"
+              >
+                <i class="fa-solid fa-volume-low"></i>
+              </button>
+            </div>
+            <div>
+              <button
+                class="icon-btn"
+                id="bm-btn"
+                onclick="toggleBookmark()"
+                title="Bookmark"
+                style="color: var(--text2); font-size: 18px"
+              >
+                <i class="fa-regular fa-bookmark"></i>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1345,17 +1383,22 @@
     document.getElementById("pill-mono").style.display =
       playing && (!stereo || outputMono) ? "" : "none";
     document.getElementById("pill-rec").style.display = recording ? "" : "none";
-    document.getElementById("snr-row").style.display = playing ? "" : "none";
 
     const pb = document.getElementById("play-btn");
-    pb.textContent = playing ? "■" : "▶";
+    pb.innerHTML = playing
+      ? '<i class="fa-solid fa-pause"></i>'
+      : '<i class="fa-solid fa-play"></i>';
     pb.classList.toggle("playing", playing);
 
-    document.getElementById("bm-btn").textContent = bookmarked ? "★" : "☆";
+    document.getElementById("bm-btn").innerHTML = bookmarked
+      ? '<i class="fa-solid fa-bookmark"></i>'
+      : '<i class="fa-regular fa-bookmark"></i>';
     document.getElementById("bm-btn").style.color = bookmarked
       ? "var(--primary)"
       : "var(--text2)";
-    document.getElementById("mute-btn").textContent = muted ? "🔇" : "🔊";
+    document.getElementById("mute-btn").innerHTML = muted
+      ? '<i class="fa-solid fa-volume-xmark"></i>'
+      : '<i class="fa-solid fa-volume-low"></i>';
     document.getElementById("mute-btn").style.color = muted
       ? "var(--danger)"
       : "var(--text2)";
@@ -1366,7 +1409,8 @@
       : playing
         ? "─── scanning ───"
         : "SDRGo";
-    document.getElementById("rds-text").textContent = station?.rt || "";
+    document.getElementById("rds-text").textContent =
+      station?.rt || "No RDS Found";
 
     document.getElementById("snr-val").textContent =
       state.snr.toFixed(1) + " dB";
@@ -2119,3 +2163,7 @@
     animId = requestAnimationFrame(drawWaveform);
   });
 </script>
+<script
+  src="https://kit.fontawesome.com/4487f2379d.js"
+  crossorigin="anonymous"
+></script>

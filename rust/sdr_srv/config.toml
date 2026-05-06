@@ -1,0 +1,44 @@
+# sdr_srv configuration
+# All values shown are the built-in defaults.
+# Override any key here, or with SDR__SECTION__KEY environment variables
+# (e.g. SDR__SERVER__PORT=9090, SDR__DEVICE__SOURCE=first_available).
+
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[logging]
+# trace | debug | info | warn | error
+level = "info,tower_http=debug"
+# pretty | compact | json
+format = "pretty"
+
+[device]
+# How to locate the RTL-SDR hardware:
+#   stub            — synthetic zero IQ, no hardware required (default)
+#   first_available — open the first RTL-SDR found on the USB bus
+#   index           — open by enumeration index (set `index` below)
+#   serial          — open by USB serial string (set `serial` below)
+#   vid_pid         — open by vendor/product ID pair (set `vid` and `pid` below)
+source = "first_available"
+
+# index = 0
+# serial = "00000001"
+# vid = "0bda"
+# pid = "2838"
+
+# Initial center frequency in Hz
+center_hz = 99_700_000
+
+# RTL-SDR IQ sample rate in samples/sec
+sample_rate = 2_400_000
+
+# Audio output sample rate in Hz
+audio_rate = 48_000
+
+# Tuner gain in tenths of dB (e.g. 200 = 20.0 dB).
+# Comment out or remove to use automatic gain control.
+# gain_tenths = 200
+
+# Enable bias-tee (5 V on antenna port for active antennas)
+bias_tee = false

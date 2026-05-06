@@ -108,6 +108,13 @@ impl DemodPipeline {
 
     // ── Shared queries ────────────────────────────────────────────────────────
 
+    pub fn channel_half_bw_hz(&self) -> f32 {
+        match self {
+            Self::Fm(p) => p.channel_half_bw_hz(),
+            Self::Am(p) => p.channel_half_bw_hz(),
+        }
+    }
+
     pub fn rssi_db(&self) -> f32 {
         match self {
             Self::Fm(p) => p.rssi_db(),

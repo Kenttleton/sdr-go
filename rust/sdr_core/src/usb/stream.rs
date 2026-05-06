@@ -102,6 +102,19 @@ impl IqStream {
         self.settling_samples = 204_800;
     }
 
+    /// Command the hardware to a new center frequency and start the settling window.
+    /// Returns an error if the device is not open or the hardware command fails.
+    pub fn retune(&mut self, freq_hz: u32) -> Result<(), String> {
+        {
+            let mut guard = self.inner.lock();
+            let hw = guard.as_mut().ok_or_else(|| "device not open".to_string())?;
+            hw.set_center_freq(freq_hz).map_err(|e| e.to_string())?;
+        }
+        self.mark_retuned();
+        log::info!("IqStream: hardware retuned to {} Hz, discarding {} settling samples", freq_hz, self.settling_samples);
+        Ok(())
+    }
+
     pub fn drain(&mut self, count: usize) -> IqBuffer {
         let available = self.available();
         let to_read = count.min(available);

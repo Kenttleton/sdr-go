@@ -211,6 +211,10 @@ impl AmPipeline {
             self.squelch_hang_remaining.saturating_sub(out.len() / 2);
     }
 
+    pub fn channel_half_bw_hz(&self) -> f32 {
+        self.bandwidth_hz
+    }
+
     pub fn rssi_db(&self) -> f32 {
         self.rssi_db
     }

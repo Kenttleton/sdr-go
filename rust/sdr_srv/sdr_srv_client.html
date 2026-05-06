@@ -1,0 +1,661 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SDR Server Client</title>
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        background: #0d0d0f;
+        color: #e0e0e0;
+        font-family: "SF Mono", "Fira Code", monospace;
+        font-size: 13px;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 32px 16px;
+        gap: 20px;
+      }
+
+      h1 {
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        color: #a0cfff;
+      }
+
+      .card {
+        background: #16181c;
+        border: 1px solid #2a2d35;
+        border-radius: 10px;
+        padding: 20px 24px;
+        width: 100%;
+        max-width: 520px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .card-title {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: #666;
+        border-bottom: 1px solid #2a2d35;
+        padding-bottom: 8px;
+      }
+
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      label {
+        color: #888;
+        min-width: 90px;
+        flex-shrink: 0;
+      }
+
+      input[type="number"],
+      input[type="text"],
+      select {
+        background: #0d0d0f;
+        border: 1px solid #2a2d35;
+        border-radius: 6px;
+        color: #e0e0e0;
+        padding: 6px 10px;
+        font-family: inherit;
+        font-size: 13px;
+        flex: 1;
+        outline: none;
+        transition: border-color 0.15s;
+      }
+      input:focus,
+      select:focus {
+        border-color: #4a8eda;
+      }
+
+      input[type="range"] {
+        flex: 1;
+        accent-color: #4a8eda;
+      }
+
+      .range-val {
+        min-width: 56px;
+        text-align: right;
+        color: #aaa;
+      }
+
+      button {
+        background: #1e3a5f;
+        border: 1px solid #3a6ea8;
+        border-radius: 6px;
+        color: #a0cfff;
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 13px;
+        padding: 6px 14px;
+        transition: background 0.15s;
+        white-space: nowrap;
+      }
+      button:hover {
+        background: #274e80;
+      }
+      button:active {
+        background: #1a3050;
+      }
+      button:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+
+      button.danger {
+        background: #3a1e1e;
+        border-color: #7a3a3a;
+        color: #ff9999;
+      }
+      button.danger:hover {
+        background: #4e2828;
+      }
+
+      .toggle-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .toggle {
+        position: relative;
+        width: 40px;
+        height: 22px;
+        flex-shrink: 0;
+      }
+      .toggle input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+      .toggle .slider {
+        position: absolute;
+        inset: 0;
+        background: #2a2d35;
+        border-radius: 11px;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      .toggle .slider::before {
+        content: "";
+        position: absolute;
+        width: 16px;
+        height: 16px;
+        top: 3px;
+        left: 3px;
+        background: #888;
+        border-radius: 50%;
+        transition:
+          transform 0.2s,
+          background 0.2s;
+      }
+      .toggle input:checked + .slider {
+        background: #1e3a5f;
+      }
+      .toggle input:checked + .slider::before {
+        transform: translateX(18px);
+        background: #4a8eda;
+      }
+
+      /* Status */
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #444;
+        flex-shrink: 0;
+        transition: background 0.3s;
+      }
+      .status-dot.connected {
+        background: #4eda8a;
+        box-shadow: 0 0 6px #4eda8a88;
+      }
+      .status-dot.error {
+        background: #ed4a4a;
+      }
+
+      .status-text {
+        color: #666;
+      }
+
+      /* Metadata display */
+      .meta-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 12px;
+      }
+      .meta-item {
+        background: #0d0d0f;
+        border: 1px solid #2a2d35;
+        border-radius: 6px;
+        padding: 10px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .meta-label {
+        font-size: 10px;
+        color: #555;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+      }
+      .meta-value {
+        font-size: 16px;
+        color: #a0cfff;
+        font-weight: 600;
+      }
+      .meta-value.stereo-on {
+        color: #4eda8a;
+      }
+      .meta-value.stereo-off {
+        color: #555;
+      }
+
+      /* RSSI bar */
+      .rssi-bar-wrap {
+        height: 4px;
+        background: #1e2028;
+        border-radius: 2px;
+        overflow: hidden;
+        margin-top: 4px;
+      }
+      .rssi-bar {
+        height: 100%;
+        background: linear-gradient(90deg, #4a8eda, #4eda8a);
+        border-radius: 2px;
+        transition: width 0.4s ease;
+        width: 0%;
+      }
+
+      /* Volume */
+      .vol-icon {
+        color: #555;
+        font-size: 15px;
+      }
+
+      /* Log */
+      #log {
+        font-size: 11px;
+        color: #555;
+        max-height: 80px;
+        overflow-y: auto;
+        background: #0a0a0c;
+        border: 1px solid #1e2028;
+        border-radius: 6px;
+        padding: 8px 10px;
+        display: flex;
+        flex-direction: column-reverse;
+      }
+      #log .err {
+        color: #ed7a7a;
+      }
+      #log .ok {
+        color: #4eda8a;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>SDR Server Client</h1>
+
+    <!-- Connection -->
+    <div class="card">
+      <div class="card-title">Connection</div>
+      <div class="row">
+        <label>Server URL</label>
+        <input type="text" id="serverUrl" value="localhost:8080" />
+      </div>
+      <div class="row">
+        <div class="status-dot" id="statusDot"></div>
+        <span class="status-text" id="statusText">Disconnected</span>
+        <div style="flex: 1"></div>
+        <button id="btnConnect">Connect</button>
+        <button id="btnDisconnect" class="danger" disabled>Disconnect</button>
+      </div>
+    </div>
+
+    <!-- Metadata -->
+    <div class="card">
+      <div class="card-title">Live Metadata</div>
+      <div class="meta-grid">
+        <div class="meta-item">
+          <span class="meta-label">Center Freq</span>
+          <span class="meta-value" id="metaFreq">—</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">RSSI</span>
+          <span class="meta-value" id="metaRssi">—</span>
+          <div class="rssi-bar-wrap">
+            <div class="rssi-bar" id="rssiBar"></div>
+          </div>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Stereo</span>
+          <span class="meta-value stereo-off" id="metaStereo">off</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Radio Controls -->
+    <div class="card">
+      <div class="card-title">Tune</div>
+      <div class="row">
+        <label>Frequency Hz</label>
+        <input
+          type="number"
+          id="freqHz"
+          value="99700000"
+          step="100000"
+          min="24000000"
+          max="1766000000"
+        />
+        <button id="btnTune">Tune</button>
+      </div>
+      <div class="row">
+        <label>Mode</label>
+        <select id="modeSelect">
+          <option value="wfm">WFM (Wide FM)</option>
+          <option value="nfm">NFM (Narrow FM)</option>
+          <option value="am_dsb">AM DSB</option>
+          <option value="am_usb">AM USB</option>
+          <option value="am_lsb">AM LSB</option>
+        </select>
+        <button id="btnMode">Set Mode</button>
+      </div>
+      <div class="toggle-row">
+        <label>FM Stereo</label>
+        <label class="toggle">
+          <input type="checkbox" id="stereoToggle" checked />
+          <span class="slider"></span>
+        </label>
+        <span style="color: #666; font-size: 12px">Enable stereo decoding</span>
+      </div>
+    </div>
+
+    <!-- Squelch -->
+    <div class="card">
+      <div class="card-title">Squelch</div>
+      <div class="row">
+        <label>Threshold</label>
+        <input
+          type="range"
+          id="squelchThreshold"
+          min="-100"
+          max="0"
+          step="1"
+          value="-80"
+        />
+        <span class="range-val" id="squelchThresholdVal">-80 dB</span>
+      </div>
+      <div class="row">
+        <label>Hang</label>
+        <input
+          type="range"
+          id="squelchHang"
+          min="0"
+          max="2000"
+          step="50"
+          value="200"
+        />
+        <span class="range-val" id="squelchHangVal">200 ms</span>
+      </div>
+      <div class="row" style="justify-content: flex-end">
+        <button id="btnSquelch">Apply Squelch</button>
+      </div>
+    </div>
+
+    <!-- Audio -->
+    <div class="card">
+      <div class="card-title">Audio</div>
+      <div class="row">
+        <span class="vol-icon">🔈</span>
+        <input
+          type="range"
+          id="volumeSlider"
+          min="0"
+          max="1"
+          step="0.01"
+          value="0.8"
+        />
+        <span class="range-val" id="volumeVal">80%</span>
+        <button id="btnMute">Mute</button>
+      </div>
+    </div>
+
+    <!-- Log -->
+    <div class="card" style="gap: 8px">
+      <div class="card-title">Log</div>
+      <div id="log"></div>
+    </div>
+
+    <script>
+      // ── State ──────────────────────────────────────────────────────────────────
+      let ws = null;
+      let audioCtx = null;
+      let gainNode = null;
+      let nextAudioTime = 0;
+      let muted = false;
+      const SAMPLE_RATE = 48000;
+      const CHANNELS = 2; // interleaved stereo from server
+      // The server sends stereo when stereo is enabled; we always treat as stereo
+      // to keep the scheduler simple. If the server sends mono the second channel
+      // will just mirror the first via the interleaved layout.
+
+      // ── Helpers ────────────────────────────────────────────────────────────────
+      function log(msg, cls = "") {
+        const el = document.getElementById("log");
+        const line = document.createElement("div");
+        if (cls) line.className = cls;
+        line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        el.prepend(line);
+        while (el.children.length > 60) el.removeChild(el.lastChild);
+      }
+
+      function setStatus(state) {
+        const dot = document.getElementById("statusDot");
+        const txt = document.getElementById("statusText");
+        dot.className = "status-dot";
+        if (state === "connected") {
+          dot.classList.add("connected");
+          txt.textContent = "Connected";
+        } else if (state === "error") {
+          dot.classList.add("error");
+          txt.textContent = "Error";
+        } else {
+          txt.textContent = "Disconnected";
+        }
+      }
+
+      function baseUrl() {
+        let baseUrl = document
+          .getElementById("serverUrl")
+          .value.trim()
+          .replace(/\/$/, "");
+        log(`Server URL: ${baseUrl}`);
+        return baseUrl;
+      }
+
+      async function apiPost(path, body) {
+        const url = `http://${baseUrl()}${path}`;
+        try {
+          const res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          log(`POST ${path} → ${res.status}`, "ok");
+        } catch (e) {
+          log(`POST ${path} failed: ${e.message}`, "err");
+        }
+      }
+
+      // ── Audio ──────────────────────────────────────────────────────────────────
+      function startAudioCtx() {
+        // Must be called synchronously inside a user-gesture handler.
+        // Browsers block AudioContext playback that starts outside a gesture.
+        if (!audioCtx) {
+          audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
+          gainNode = audioCtx.createGain();
+          gainNode.gain.value = parseFloat(
+            document.getElementById("volumeSlider").value,
+          );
+          gainNode.connect(audioCtx.destination);
+          nextAudioTime = audioCtx.currentTime + 0.1;
+          log("AudioContext started", "ok");
+        }
+        if (audioCtx.state === "suspended") audioCtx.resume();
+      }
+
+      function schedulePcm(data) {
+        if (!audioCtx) return;
+        const f32 = new Float32Array(data);
+        const totalSamples = f32.length;
+
+        // Detect mono vs stereo based on whether stereo toggle is checked.
+        // The server produces interleaved stereo when stereo is on.
+        const isStereo = document.getElementById("stereoToggle").checked;
+        const numCh = isStereo ? 2 : 1;
+        const framesPerChannel = Math.floor(totalSamples / numCh);
+        if (framesPerChannel === 0) return;
+
+        const buf = audioCtx.createBuffer(numCh, framesPerChannel, SAMPLE_RATE);
+
+        if (numCh === 2) {
+          const L = buf.getChannelData(0);
+          const R = buf.getChannelData(1);
+          for (let i = 0; i < framesPerChannel; i++) {
+            L[i] = f32[i * 2];
+            R[i] = f32[i * 2 + 1];
+          }
+        } else {
+          const ch = buf.getChannelData(0);
+          for (let i = 0; i < framesPerChannel; i++) ch[i] = f32[i];
+        }
+
+        const src = audioCtx.createBufferSource();
+        src.buffer = buf;
+        src.connect(gainNode);
+
+        const now = audioCtx.currentTime;
+        // If we've fallen behind (e.g. tab was backgrounded), resync.
+        if (nextAudioTime < now + 0.02) nextAudioTime = now + 0.05;
+        src.start(nextAudioTime);
+        nextAudioTime += buf.duration;
+      }
+
+      // ── WebSocket ──────────────────────────────────────────────────────────────
+      function connect() {
+        if (ws) return;
+        startAudioCtx(); // must happen synchronously in the click handler
+        const url = `ws://${baseUrl()}/ws/audio`;
+        log(`Connecting to ${url}`);
+        ws = new WebSocket(url);
+        ws.binaryType = "arraybuffer";
+
+        ws.onopen = () => {
+          setStatus("connected");
+          log("WebSocket connected", "ok");
+          document.getElementById("btnConnect").disabled = true;
+          document.getElementById("btnDisconnect").disabled = false;
+        };
+
+        ws.onclose = () => {
+          setStatus("disconnected");
+          log("WebSocket closed");
+          ws = null;
+          document.getElementById("btnConnect").disabled = false;
+          document.getElementById("btnDisconnect").disabled = true;
+          if (audioCtx) {
+            audioCtx.close();
+            audioCtx = null;
+            gainNode = null;
+            nextAudioTime = 0;
+          }
+        };
+
+        ws.onerror = () => {
+          setStatus("error");
+          log("WebSocket error", "err");
+        };
+
+        ws.onmessage = (evt) => {
+          if (typeof evt.data === "string") {
+            handleMeta(JSON.parse(evt.data));
+          } else {
+            if (!muted) schedulePcm(evt.data);
+          }
+        };
+      }
+
+      function disconnect() {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send("disconnect"); // ask server to close first, then drain
+        } else if (ws) {
+          ws.close();
+        }
+      }
+
+      // ── Metadata ───────────────────────────────────────────────────────────────
+      function handleMeta(m) {
+        if (m.center_hz !== undefined) {
+          document.getElementById("metaFreq").textContent =
+            (m.center_hz / 1e6).toFixed(3) + " MHz";
+        }
+        if (m.rssi_db !== undefined) {
+          const rssi = m.rssi_db.toFixed(1);
+          document.getElementById("metaRssi").textContent = rssi + " dB";
+          // Map -100..0 dB to 0..100%
+          const pct = Math.max(0, Math.min(100, m.rssi_db + 100));
+          document.getElementById("rssiBar").style.width = pct + "%";
+        }
+        if (m.stereo_detected !== undefined) {
+          const el = document.getElementById("metaStereo");
+          el.textContent = m.stereo_detected ? "on" : "off";
+          el.className =
+            "meta-value " + (m.stereo_detected ? "stereo-on" : "stereo-off");
+        }
+      }
+
+      // ── Controls ───────────────────────────────────────────────────────────────
+      document.getElementById("btnConnect").addEventListener("click", connect);
+      document
+        .getElementById("btnDisconnect")
+        .addEventListener("click", disconnect);
+
+      document.getElementById("btnTune").addEventListener("click", () => {
+        const hz = parseInt(document.getElementById("freqHz").value, 10);
+        if (isNaN(hz)) return log("Invalid frequency", "err");
+        apiPost("/api/tune", { freq_hz: hz });
+      });
+
+      document.getElementById("btnMode").addEventListener("click", () => {
+        const mode = document.getElementById("modeSelect").value;
+        apiPost("/api/mode", { mode });
+      });
+
+      document
+        .getElementById("stereoToggle")
+        .addEventListener("change", (e) => {
+          apiPost("/api/stereo", { enabled: e.target.checked });
+        });
+
+      document.getElementById("btnSquelch").addEventListener("click", () => {
+        const threshold_db = parseFloat(
+          document.getElementById("squelchThreshold").value,
+        );
+        const hang_ms = parseFloat(
+          document.getElementById("squelchHang").value,
+        );
+        apiPost("/api/squelch", { threshold_db, hang_ms });
+      });
+
+      // Range display updates
+      document
+        .getElementById("squelchThreshold")
+        .addEventListener("input", (e) => {
+          document.getElementById("squelchThresholdVal").textContent =
+            e.target.value + " dB";
+        });
+      document.getElementById("squelchHang").addEventListener("input", (e) => {
+        document.getElementById("squelchHangVal").textContent =
+          e.target.value + " ms";
+      });
+
+      // Volume
+      document.getElementById("volumeSlider").addEventListener("input", (e) => {
+        const v = parseFloat(e.target.value);
+        document.getElementById("volumeVal").textContent =
+          Math.round(v * 100) + "%";
+        if (gainNode) gainNode.gain.value = v;
+      });
+
+      document.getElementById("btnMute").addEventListener("click", () => {
+        muted = !muted;
+        document.getElementById("btnMute").textContent = muted
+          ? "Unmute"
+          : "Mute";
+        if (gainNode)
+          gainNode.gain.value = muted
+            ? 0
+            : parseFloat(document.getElementById("volumeSlider").value);
+      });
+    </script>
+  </body>
+</html>

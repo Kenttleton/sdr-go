@@ -13,6 +13,7 @@ pub enum FmMode {
 
 pub struct FmPipeline {
     mode: FmMode,
+    channel_half_bw_hz: f32,
     // Center of the demodulated audio channel in Hz (0 = DC, standard FM).
     // Non-zero shifts the audio band for sub-channel extraction (future use).
     #[allow(dead_code)]
@@ -85,10 +86,10 @@ impl FmPipeline {
         output_rate: u32,
         stereo: bool,
         mode: FmMode,
-        bandwidth_hz: Option<f32>,
+        channel_half_bw_hz: Option<f32>,
         center_hz: f32,
     ) -> Self {
-        let half_bw = bandwidth_hz.unwrap_or(match mode {
+        let channel_half_bw_hz = channel_half_bw_hz.unwrap_or(match mode {
             FmMode::Wide => 100_000.0,
             FmMode::Narrow => 12_500.0,
         });
@@ -102,14 +103,14 @@ impl FmPipeline {
         // 38 kHz stereo subcarrier. NFM scales to 4× the channel half-bandwidth.
         let pre_target = match mode {
             FmMode::Wide => 200_000u32,
-            FmMode::Narrow => ((half_bw * 4.0) as u32).max(50_000),
+            FmMode::Narrow => ((channel_half_bw_hz * 4.0) as u32).max(50_000),
         };
         let pre_decimation = ((sample_rate / pre_target) as usize).max(1);
         let intermediate_rate = sample_rate / pre_decimation as u32;
 
         let pre_filter = DecimatingFirFilter::new(
             pre_decimation,
-            firdes::lowpass(half_bw / sample_rate as f32, firdes::Kaiser::new(50.0)),
+            firdes::lowpass(channel_half_bw_hz / sample_rate as f32, firdes::Kaiser::new(50.0)),
         );
 
         let audio_lpf = FirFilter::new(firdes::lowpass(
@@ -135,6 +136,7 @@ impl FmPipeline {
 
         Self {
             mode,
+            channel_half_bw_hz,
             center_hz,
             sample_rate,
             prev_sample: Cf32::new(1.0, 0.0),
@@ -290,6 +292,10 @@ impl FmPipeline {
         // Drain hang counter by the number of stereo frames just produced
         self.squelch_hang_remaining =
             self.squelch_hang_remaining.saturating_sub(out.len() / 2);
+    }
+
+    pub fn channel_half_bw_hz(&self) -> f32 {
+        self.channel_half_bw_hz
     }
 
     pub fn rssi_db(&self) -> f32 {

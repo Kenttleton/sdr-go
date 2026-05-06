@@ -2,9 +2,9 @@ mod hardware;
 mod device;
 mod stream;
 
-#[allow(unused_imports)]
 pub use hardware::SdrHardware;
-#[allow(unused_imports)]
-pub use device::{DeviceConfig, DeviceError, SdrDevice};
-#[allow(unused_imports)]
-pub use stream::{IqStream, IqBuffer};
+pub use device::{DeviceConfig, DeviceError, DeviceSource, SdrDevice};
+pub use stream::{IqBuffer, IqStream};
+
+#[cfg(feature = "enumerate")]
+pub use device::DeviceInfo;

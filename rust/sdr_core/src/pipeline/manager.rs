@@ -58,8 +58,31 @@ impl PipelineManager {
 
     // ── Frequency control ─────────────────────────────────────────────────────
 
+    /// Hardware center frequency — what the RTL-SDR tuner is set to.
     pub fn center_hz(&self) -> u32 {
         self.center_hz
+    }
+
+    /// Current DDC offset from hardware center.
+    pub fn ddc_offset_hz(&self) -> f32 {
+        self.ddc.offset_hz()
+    }
+
+    /// Actual listening frequency = hardware center + DDC offset.
+    pub fn channel_center_hz(&self) -> f64 {
+        self.center_hz as f64 + self.ddc.offset_hz() as f64
+    }
+
+    /// Maximum DDC shift before the channel exits the sample bandwidth.
+    /// = sample_rate/2 − channel_half_bw
+    pub fn max_ddc_offset_hz(&self) -> f32 {
+        self.input_rate as f32 / 2.0 - self.demod.channel_half_bw_hz()
+    }
+
+    /// Returns true when `target_hz` is outside DDC range and needs a hardware retune.
+    pub fn requires_hardware_retune(&self, target_hz: u32) -> bool {
+        let offset = target_hz as f64 - self.center_hz as f64;
+        offset.abs() as f32 > self.max_ddc_offset_hz()
     }
 
     /// Apply a small frequency offset digitally without touching hardware.
